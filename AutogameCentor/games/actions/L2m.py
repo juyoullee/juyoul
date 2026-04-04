@@ -35,19 +35,19 @@ class L2mDayilyAction(ActionsBase):
             ActionSpec(id="l2m.power_save", label="절전모드", runner=self.절전모드, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.bag_open", label="가방열기", runner=self.가방열기, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.event_dungeon", label="UL이벤트던전", runner=self.UL이벤트던전, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.mail", label="UL우편받기", runner=self.UL우편받기, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.mail", label="우편받기", runner=self.우편받기, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.return_hunt", label="사냥터귀환", runner=self.사냥터귀환, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.auction", label="UL경매장", runner=self.UL경매장, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.auction", label="경매장", runner=self.경매장, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.full_routine", label="전체루틴", runner=self.전체루틴, board="l2m", pre_focus="리니지2M", post_minimize="리니지2M"),
             ActionSpec(id="l2m.event_craft", label="이벤트제작", runner=self.이벤트제작, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.spirit_reset", label="UL정령계초기화", runner=self.UL정령계초기화, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.season_pass", label="UL시즌패스", runner=self.UL시즌패스, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.season_pass", label="시즌패스", runner=self.시즌패스, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.item_enchant", label="아이템강화", runner=self.아이템강화, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.daily", label="UL데일리", runner=self.UL데일리, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.potion", label="UL물약구매", runner=self.UL물약구매, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.cash_shop", label="UL캐시상점", runner=self.UL캐시상점, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.raccoon_shop", label="너구리상점", runner=self.너구리상점, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.yeopo_dungeon", label="UL여포던전", runner=self.UL여포던전, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.yeopo_dungeon", label="여포던전", runner=self.여포던전, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.yeopo_click", label="여포클릭", runner=self.여포클릭, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.yeopo_shop", label="UL여포상점", runner=self.UL여포상점, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.power_save_off", label="절전해제", runner=self.절전해제, board="l2m", pre_focus="리니지2M"),
@@ -77,16 +77,16 @@ class L2mDayilyAction(ActionsBase):
     UL데일리 = lambda self: self._run_windows(L2mCoordinates.Dayily)
     UL물약구매 = lambda self: self._run_windows(L2mCoordinates.potion)
     UL캐시상점 = lambda self: self._run_windows(L2mCoordinates.cashShop)
-    UL우편받기 = lambda self: self._run_windows(L2mCoordinates.우편받기)
+    우편받기 = lambda self: self._run_windows(L2mCoordinates.우편받기)
     가방열기 = lambda self: self._run_windows(L2mCoordinates.가방열기)
     사냥터귀환 = lambda self: self._run_windows(L2mCoordinates.사냥터귀환)
-    UL경매장 = lambda self: self._run_windows(L2mCoordinates.경매장)
+    경매장 = lambda self: self._run_windows(L2mCoordinates.경매장)
     UL정령계초기화 = lambda self: self._run_windows(L2mCoordinates.정령계초기화)
     이벤트제작 = lambda self: self._run_windows(L2mCoordinates.이벤트제작)
-    UL시즌패스 = lambda self: self._run_windows(L2mCoordinates.시즌패스)
+    시즌패스 = lambda self: self._run_windows(L2mCoordinates.시즌패스)
     너구리상점 = lambda self: self._run_windows(L2mCoordinates.event_shop)
     UL이벤트던전 = lambda self: self._run_windows(L2mCoordinates.EventDungeon)
-    UL여포던전 = lambda self: self._run_windows(L2mCoordinates.이벤트던전_여포)
+    여포던전 = lambda self: self._run_windows(L2mCoordinates.이벤트던전_여포)
     UL여포상점 = lambda self: self._run_windows(L2mCoordinates.여포상점)
     절전해제 = lambda self: self._run_windows(L2mCoordinates.절전해제)
 
