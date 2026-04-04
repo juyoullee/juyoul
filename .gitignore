@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+.vscode/
+
+AutogameCentor/controlcentor.log
+AutogameCentor/custom_actions.json
