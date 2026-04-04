@@ -41,6 +41,8 @@ def bring_to_front(title_keyword: str):
     if not matches:
         raise RuntimeError(f"Window not found: {title_keyword}")
 
+    focused_titles = []
+
     for item in matches:
         hwnd = item["hwnd"]
 
@@ -66,7 +68,9 @@ def bring_to_front(title_keyword: str):
             win32con.SWP_NOMOVE | win32con.SWP_NOSIZE,
         )
         win32gui.SetForegroundWindow(hwnd)
-        return item["title"]
+        focused_titles.append(item["title"])
+
+    return focused_titles
 
 
 def minimize_window(title_keyword: str):
