@@ -163,6 +163,9 @@ class ControlCenterApp:
         self.last_day = datetime.now().day
         self.board_frames = {}
         self.content_frame = None
+        self.board_canvas = None
+        self.board_scrollbar = None
+        self.board_container = None
 
         self.providers = self._build_providers()
         self.board_specs = self._build_board_specs()
@@ -273,63 +276,55 @@ class ControlCenterApp:
         shell = tk.Frame(self.root, bg="#0b1220")
         shell.pack(fill="both", expand=True, padx=16, pady=16)
 
-        header = tk.Frame(shell, bg="#111a2e", highlightbackground="#24324a", highlightthickness=1)
-        header.pack(fill="x", pady=(0, 16))
+        self.schedule_label = None
+        self.health_label = None
 
-        title = tk.Label(
-            header,
-            text="Automation Control Center",
-            bg="#111a2e",
-            fg="#f7fbff",
-            font=("Malgun Gothic", 19, "bold"),
+        content_shell = tk.Frame(shell, bg="#0b1220")
+        content_shell.pack(fill="both", expand=True)
+
+        self.board_canvas = tk.Canvas(
+            content_shell,
+            bg="#0b1220",
+            highlightthickness=0,
+            bd=0,
         )
-        title.pack(anchor="w", padx=18, pady=(16, 2))
+        self.board_canvas.pack(side="left", fill="both", expand=True)
 
-        subtitle = tk.Label(
-            header,
-            text="게임 자동화, 사용자 매크로, 스케줄을 한 화면에서 관리합니다.",
-            bg="#111a2e",
-            fg="#93a4bf",
-            font=("Malgun Gothic", 10),
+        self.board_scrollbar = ttk.Scrollbar(
+            content_shell,
+            orient="vertical",
+            command=self.board_canvas.yview,
         )
-        subtitle.pack(anchor="w", padx=18, pady=(0, 14))
+        self.board_scrollbar.pack(side="right", fill="y")
+        self.board_canvas.configure(yscrollcommand=self.board_scrollbar.set)
 
-        schedule_card = tk.Frame(shell, bg="#ffffff", highlightbackground="#d8e0ec", highlightthickness=1)
-        schedule_card.pack(fill="x", pady=(0, 16))
-
-        schedule_title = tk.Label(
-            schedule_card,
-            text="오늘의 스케줄",
-            bg="#ffffff",
-            fg="#132033",
-            font=("Malgun Gothic", 12, "bold"),
+        self.content_frame = tk.Frame(self.board_canvas, bg="#0b1220")
+        self.board_container = self.board_canvas.create_window(
+            (0, 0),
+            window=self.content_frame,
+            anchor="nw",
         )
-        schedule_title.pack(anchor="w", padx=16, pady=(14, 4))
 
-        self.schedule_label = tk.Label(
-            schedule_card,
-            text="스케줄 준비 중...",
-            bg="#ffffff",
-            fg="#516072",
-            justify="left",
-            anchor="w",
-            font=("Malgun Gothic", 10),
-        )
-        self.schedule_label.pack(fill="x", padx=16, pady=(0, 14))
+        self.content_frame.bind("<Configure>", self._sync_board_scrollregion)
+        self.board_canvas.bind("<Configure>", self._resize_board_container)
+        self.board_canvas.bind_all("<MouseWheel>", self._on_board_mousewheel)
 
-        self.health_label = tk.Label(
-            schedule_card,
-            text="클라이언트 상태 확인 대기 중...",
-            bg="#ffffff",
-            fg="#8b5e00",
-            justify="left",
-            anchor="w",
-            font=("Malgun Gothic", 9),
-        )
-        self.health_label.pack(fill="x", padx=16, pady=(0, 14))
+    def _sync_board_scrollregion(self, event=None):
+        if self.board_canvas is None:
+            return
+        self.board_canvas.configure(scrollregion=self.board_canvas.bbox("all"))
 
-        self.content_frame = tk.Frame(shell, bg="#0b1220")
-        self.content_frame.pack(fill="both", expand=True)
+    def _resize_board_container(self, event):
+        if self.board_canvas is None or self.board_container is None:
+            return
+        self.board_canvas.itemconfigure(self.board_container, width=event.width)
+
+    def _on_board_mousewheel(self, event):
+        if self.board_canvas is None:
+            return
+        delta = int(-1 * (event.delta / 120))
+        if delta != 0:
+            self.board_canvas.yview_scroll(delta, "units")
 
     def _render_boards(self):
         for child in self.content_frame.winfo_children():
@@ -388,6 +383,9 @@ class ControlCenterApp:
 
             actions = [spec for spec in self.action_specs if spec.board == board.id]
             AutoButtonGrid(inner, on_click=self.request_run, columns=board.columns).render(actions)
+
+        self.content_frame.update_idletasks()
+        self._sync_board_scrollregion()
 
     def request_run(self, spec: ActionSpec):
         self.root.after(0, lambda: self._show_countdown_and_run(spec))
@@ -494,26 +492,36 @@ class ControlCenterApp:
             pass
 
     def _update_schedule_label(self):
+        if self.schedule_label is None:
+            return
+
         today = datetime.now().strftime("%Y-%m-%d")
         lines = [f"{item['time']}  {item['label']}" for item in self.schedule_items.values()]
-        if not lines:
-            lines = ["등록된 작업 없음"]
 
-        self.schedule_label.config(text=f"{today}\n" + "\n".join(lines))
+        if not lines:
+            summary = "??? ?? ??"
+        else:
+            summary = " / ".join(lines[:2])
+            if len(lines) > 2:
+                summary += f" ? {len(lines) - 2}?"
+
+        self.schedule_label.config(text=f"{today}  {summary}")
 
     def _update_health_label(self):
+        if self.health_label is None:
+            return
+
         lines = []
 
         for title, expected in EXPECTED_WINDOW_COUNTS.items():
             current = count_windows(title)
-            status = "정상" if current >= expected else "부족"
+            status = "??" if current >= expected else "??"
             lines.append(f"{title}: {current}/{expected} ({status})")
 
         if not lines:
-            lines = ["대상 창 체크 없음"]
+            lines = ["?? ? ?? ??"]
 
-        self.health_label.config(text="클라이언트 상태\n" + "\n".join(lines))
-
+        self.health_label.config(text="  |  ".join(lines))
     def _refresh_actions(self):
         self.action_specs = self._collect_actions()
         self.actions_by_id = {spec.id: spec for spec in self.action_specs}
