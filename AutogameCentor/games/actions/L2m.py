@@ -25,7 +25,7 @@ class L2mDayilyAction(ActionsBase):
         "UL이벤트던전", "우편받기", "사냥터귀환", "경매장", "전체루틴",
         "이벤트제작", "UL정령계초기화", "시즌패스", "아이템강화",
         "UL데일리", "UL물약구매", "UL캐시상점", "너구리상점", "UL여포던전",
-        "여포클릭", "UL여포상점",
+        "여포클릭", "고참상점",
     ]
 
     def get_action_specs(self):
@@ -49,7 +49,7 @@ class L2mDayilyAction(ActionsBase):
             ActionSpec(id="l2m.raccoon_shop", label="너구리상점", runner=self.너구리상점, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.yeopo_dungeon", label="여포던전", runner=self.여포던전, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.yeopo_click", label="여포클릭", runner=self.여포클릭, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.yeopo_shop", label="UL여포상점", runner=self.UL여포상점, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.yeopo_shop", label="고참상점", runner=self.고참상점, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.power_save_off", label="절전해제", runner=self.절전해제, board="l2m", pre_focus="리니지2M"),
         ]
 
@@ -87,7 +87,7 @@ class L2mDayilyAction(ActionsBase):
     너구리상점 = lambda self: self._run_windows(L2mCoordinates.event_shop)
     UL이벤트던전 = lambda self: self._run_windows(L2mCoordinates.EventDungeon)
     여포던전 = lambda self: self._run_windows(L2mCoordinates.이벤트던전_여포)
-    UL여포상점 = lambda self: self._run_windows(L2mCoordinates.여포상점)
+    고참상점 = lambda self: self._run_windows(L2mCoordinates.고참상점)
     절전해제 = lambda self: self._run_windows(L2mCoordinates.절전해제)
 
     def 전체루틴(self):
