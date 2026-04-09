@@ -27,6 +27,8 @@ APP_TITLE = "ControlCentor"
 APP_SIZE = "1260x860"
 LOG_PATH = os.path.join(os.path.dirname(__file__), "controlcentor.log")
 CUSTOM_ACTIONS_PATH = os.path.join(os.path.dirname(__file__), "custom_actions.json")
+ACTION_COOLDOWN_SECONDS = 10
+ACTION_TIMEOUT_SECONDS = 600
 
 BOARD_OPTIONS = [
     ("odin", "ODIN"),
@@ -166,6 +168,11 @@ class ControlCenterApp:
         self.board_canvas = None
         self.board_scrollbar = None
         self.board_container = None
+        self.safety_label = None
+        self.emergency_stop = False
+        self.last_run_at = 0.0
+        self.active_action_count = 0
+        self.guard_lock = threading.Lock()
 
         self.providers = self._build_providers()
         self.board_specs = self._build_board_specs()
@@ -278,6 +285,48 @@ class ControlCenterApp:
 
         self.schedule_label = None
         self.health_label = None
+        self.safety_label = None
+
+        top_bar = tk.Frame(shell, bg="#0b1220")
+        top_bar.pack(fill="x", pady=(0, 10))
+
+        left = tk.Frame(top_bar, bg="#0b1220")
+        left.pack(side="left", fill="x", expand=True)
+
+        self.schedule_label = tk.Label(
+            left,
+            text="schedule: -",
+            bg="#0b1220",
+            fg="#8da2c0",
+            font=("Malgun Gothic", 9),
+            anchor="w",
+        )
+        self.schedule_label.pack(fill="x")
+
+        self.health_label = tk.Label(
+            left,
+            text="health: -",
+            bg="#0b1220",
+            fg="#8da2c0",
+            font=("Malgun Gothic", 9),
+            anchor="w",
+        )
+        self.health_label.pack(fill="x", pady=(2, 0))
+
+        right = tk.Frame(top_bar, bg="#0b1220")
+        right.pack(side="right")
+
+        self.safety_label = tk.Label(
+            right,
+            text=f"cooldown {ACTION_COOLDOWN_SECONDS}s | timeout {ACTION_TIMEOUT_SECONDS}s",
+            bg="#0b1220",
+            fg="#93c5fd",
+            font=("Malgun Gothic", 9, "bold"),
+        )
+        self.safety_label.pack(side="left", padx=(0, 8))
+
+        ttk.Button(right, text="긴급 정지", style="Danger.TButton", command=self._activate_emergency_stop).pack(side="left")
+        ttk.Button(right, text="정지 해제", style="Board.TButton", command=self._release_emergency_stop).pack(side="left", padx=(8, 0))
 
         content_shell = tk.Frame(shell, bg="#0b1220")
         content_shell.pack(fill="both", expand=True)
@@ -412,6 +461,10 @@ class ControlCenterApp:
         return True
 
     def _show_countdown_and_run(self, spec: ActionSpec):
+        if self.emergency_stop:
+            messagebox.showwarning("실행 차단", "긴급 정지 상태입니다. 정지 해제 후 실행하세요.", parent=self.root)
+            return
+
         countdown = max(0, spec.countdown)
         if countdown == 0:
             self._start_action(spec)
@@ -458,7 +511,10 @@ class ControlCenterApp:
             if spec.pre_focus:
                 safe_focus(spec.pre_focus)
 
-            result = spec.runner()
+            if spec.background:
+                result = self._run_with_timeout(spec)
+            else:
+                result = spec.runner()
             if result is False:
                 log(f"STOPPED {spec.id} / {spec.label}")
             else:
@@ -466,12 +522,27 @@ class ControlCenterApp:
         except Exception:
             log_exc(spec.id)
         finally:
+            with self.guard_lock:
+                self.active_action_count = max(0, self.active_action_count - 1)
+
             if spec.post_minimize:
                 safe_minimize(spec.post_minimize)
 
             self.root.after(500, self._restore_gui)
 
     def _start_action(self, spec: ActionSpec):
+        with self.guard_lock:
+            now = time.time()
+            if self.active_action_count > 0:
+                messagebox.showwarning("실행 대기", "이미 다른 동작이 실행 중입니다.", parent=self.root)
+                return
+            if now - self.last_run_at < ACTION_COOLDOWN_SECONDS:
+                remaining = max(0, int(ACTION_COOLDOWN_SECONDS - (now - self.last_run_at)))
+                messagebox.showwarning("쿨다운", f"다음 실행까지 {remaining}초 기다려주세요.", parent=self.root)
+                return
+            self.active_action_count += 1
+            self.last_run_at = now
+
         if spec.minimize_gui:
             try:
                 self.root.iconify()
@@ -490,6 +561,50 @@ class ControlCenterApp:
             self.root.focus_force()
         except Exception:
             pass
+
+    def _run_with_timeout(self, spec: ActionSpec):
+        holder = {"result": None, "error": None}
+
+        def worker():
+            try:
+                holder["result"] = spec.runner()
+            except Exception as exc:
+                holder["error"] = exc
+
+        runner_thread = threading.Thread(target=worker, daemon=True)
+        runner_thread.start()
+        runner_thread.join(ACTION_TIMEOUT_SECONDS)
+
+        if runner_thread.is_alive():
+            self._stop_all_running_actions()
+            log(f"TIMEOUT {spec.id} / {spec.label} / {ACTION_TIMEOUT_SECONDS}s")
+            return False
+
+        if holder["error"] is not None:
+            raise holder["error"]
+
+        return holder["result"]
+
+    def _stop_all_running_actions(self):
+        for provider in self.providers:
+            if hasattr(provider, "RUNNING"):
+                provider.RUNNING = False
+
+    def _activate_emergency_stop(self):
+        self.emergency_stop = True
+        self._stop_all_running_actions()
+        if self.safety_label is not None:
+            self.safety_label.config(text="EMERGENCY STOP ON", fg="#fca5a5")
+        log("EMERGENCY STOP ON")
+
+    def _release_emergency_stop(self):
+        self.emergency_stop = False
+        if self.safety_label is not None:
+            self.safety_label.config(
+                text=f"cooldown {ACTION_COOLDOWN_SECONDS}s | timeout {ACTION_TIMEOUT_SECONDS}s",
+                fg="#93c5fd",
+            )
+        log("EMERGENCY STOP OFF")
 
     def _update_schedule_label(self):
         if self.schedule_label is None:
@@ -556,7 +671,7 @@ class ControlCenterApp:
         }
 
         name_var = tk.StringVar()
-        board_var = tk.StringVar(value="Lineage2M")
+        board_var = tk.StringVar(value="L2M Custom")
         focus_var = tk.StringVar(value="Lineage2M")
         countdown_var = tk.StringVar(value="3")
         status_var = tk.StringVar(value="매크로 이름을 입력한 뒤 녹화를 시작하거나 수동 스텝을 추가하세요.")
@@ -1166,9 +1281,11 @@ class ControlCenterApp:
         }
 
         name_var = tk.StringVar(value=existing["label"] if existing else "")
-        board_var = tk.StringVar(value=BOARD_LABELS.get(existing.get("board", "l2m_custom"), "Lineage2M") if existing else "Lineage2M")
+        board_var = tk.StringVar(value=BOARD_LABELS.get(existing.get("board", "l2m_custom"), "L2M Custom") if existing else "L2M Custom")
         focus_var = tk.StringVar(value=existing.get("pre_focus", "Lineage2M") if existing else "Lineage2M")
         countdown_var = tk.StringVar(value=str(existing.get("countdown", 3)) if existing else "3")
+        loop_mode_var = tk.StringVar(value="무한 반복" if existing and existing.get("loop_infinite") else "횟수 반복")
+        loop_count_var = tk.StringVar(value=str(existing.get("loop_count", 1)) if existing else "1")
         status_var = tk.StringVar(value="좌측 타임라인에서 스텝을 선택해 편집하거나 상단 도구로 새 스텝을 추가하세요.")
 
         root_card = tk.Frame(dialog, bg="#ffffff", highlightbackground="#d5deea", highlightthickness=1)
@@ -1185,6 +1302,8 @@ class ControlCenterApp:
         self._build_labeled_combo(meta, "배치 위치", board_var, [label for _, label in BOARD_OPTIONS], 0, 1)
         self._build_labeled_entry(meta, "대상 창 제목", focus_var, 1, 0)
         self._build_labeled_entry(meta, "카운트다운", countdown_var, 1, 1)
+        self._build_labeled_combo(meta, "반복 모드", loop_mode_var, ["횟수 반복", "무한 반복"], 2, 0)
+        self._build_labeled_entry(meta, "반복 횟수", loop_count_var, 2, 1)
 
         toolbar = tk.Frame(root_card, bg="#ffffff")
         toolbar.pack(fill="x", padx=16, pady=(0, 10))
@@ -1501,16 +1620,39 @@ class ControlCenterApp:
             except ValueError:
                 messagebox.showwarning("확인", "카운트다운은 숫자로 입력하세요.", parent=dialog)
                 return
-
-            board_id = next((item_id for item_id, item_label in BOARD_OPTIONS if item_label == board_var.get().strip()), None)
-            if board_id is None:
-                messagebox.showwarning("확인", "배치 위치를 선택하세요.", parent=dialog)
+            try:
+                loop_count = int(loop_count_var.get().strip())
+            except ValueError:
+                messagebox.showwarning("확인", "반복 횟수는 숫자로 입력하세요.", parent=dialog)
                 return
+            if loop_count <= 0:
+                messagebox.showwarning("확인", "반복 횟수는 1 이상이어야 합니다.", parent=dialog)
+                return
+            loop_infinite = loop_mode_var.get() == "무한 반복"
+
+            board_id = next((item_id for item_id, item_label in BOARD_OPTIONS if item_label == board_var.get().strip()), "l2m_custom")
 
             if existing:
-                provider.update_action(existing["id"], label=label, steps=state["steps"], board=board_id, pre_focus=focus_var.get().strip(), countdown=countdown)
+                provider.update_action(
+                    existing["id"],
+                    label=label,
+                    steps=state["steps"],
+                    board=board_id,
+                    pre_focus=focus_var.get().strip(),
+                    countdown=countdown,
+                    loop_count=loop_count,
+                    loop_infinite=loop_infinite,
+                )
             else:
-                provider.save_action(label=label, steps=state["steps"], board=board_id, pre_focus=focus_var.get().strip(), countdown=countdown)
+                provider.save_action(
+                    label=label,
+                    steps=state["steps"],
+                    board=board_id,
+                    pre_focus=focus_var.get().strip(),
+                    countdown=countdown,
+                    loop_count=loop_count,
+                    loop_infinite=loop_infinite,
+                )
 
             self._refresh_actions()
             dialog.destroy()
@@ -1642,6 +1784,8 @@ class ControlCenterApp:
             schedule.clear()
         except Exception:
             pass
+
+        self._stop_all_running_actions()
 
         self.root.destroy()
 

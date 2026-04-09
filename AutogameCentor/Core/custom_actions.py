@@ -50,7 +50,11 @@ class RecordedActionLibrary(ActionsBase):
                 ActionSpec(
                     id=item["id"],
                     label=item["label"],
-                    runner=self._make_runner(item["steps"]),
+                    runner=self._make_runner(
+                        item["steps"],
+                        loop_count=int(item.get("loop_count", 1)),
+                        loop_infinite=bool(item.get("loop_infinite", False)),
+                    ),
                     board=item.get("board", "l2m_custom"),
                     pre_focus=item.get("pre_focus") or "Lineage2M",
                     post_minimize=item.get("post_minimize"),
@@ -92,6 +96,8 @@ class RecordedActionLibrary(ActionsBase):
         pre_focus="Lineage2M",
         post_minimize=None,
         countdown=3,
+        loop_count=1,
+        loop_infinite=False,
     ):
         actions = self.load_actions()
         action_id = self._make_action_id(label, actions)
@@ -103,6 +109,8 @@ class RecordedActionLibrary(ActionsBase):
                 "pre_focus": pre_focus,
                 "post_minimize": post_minimize,
                 "countdown": countdown,
+                "loop_count": max(1, int(loop_count)),
+                "loop_infinite": bool(loop_infinite),
                 "steps": deepcopy(steps),
             }
         )
@@ -125,6 +133,8 @@ class RecordedActionLibrary(ActionsBase):
         pre_focus="Lineage2M",
         post_minimize=None,
         countdown=3,
+        loop_count=1,
+        loop_infinite=False,
     ):
         actions = self.load_actions()
 
@@ -137,6 +147,8 @@ class RecordedActionLibrary(ActionsBase):
             item["pre_focus"] = pre_focus
             item["post_minimize"] = post_minimize
             item["countdown"] = countdown
+            item["loop_count"] = max(1, int(loop_count))
+            item["loop_infinite"] = bool(loop_infinite)
             self._write_actions(actions)
             return True
 
@@ -154,16 +166,23 @@ class RecordedActionLibrary(ActionsBase):
         with open(self.storage_path, "w", encoding="utf-8") as file:
             json.dump(actions, file, ensure_ascii=False, indent=2)
 
-    def _make_runner(self, steps):
+    def _make_runner(self, steps, loop_count=1, loop_infinite=False):
         frozen_steps = deepcopy(steps)
+        total_loops = max(1, int(loop_count))
+        repeat_forever = bool(loop_infinite)
 
         def run():
             self.RUNNING = True
+            executed = 0
 
-            for step in frozen_steps:
-                if not self._run_step(step):
-                    return False
+            while self.RUNNING:
+                for step in frozen_steps:
+                    if not self._run_step(step):
+                        return False
 
+                executed += 1
+                if not repeat_forever and executed >= total_loops:
+                    break
             return True
 
         return run
