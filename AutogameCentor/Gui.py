@@ -1,5 +1,6 @@
 import math
 import os
+import queue
 import sys
 import threading
 import time
@@ -22,7 +23,7 @@ from games.actions.Odin import Odin_Action
 sys.dont_write_bytecode = True
 
 APP_TITLE = "ControlCentor"
-APP_SIZE = "1260x860"
+APP_SIZE = "1260x900"
 LOG_PATH = os.path.join(os.path.dirname(__file__), "controlcentor.log")
 CUSTOM_ACTIONS_PATH = os.path.join(os.path.dirname(__file__), "custom_actions.json")
 ACTION_COOLDOWN_SECONDS = 10
@@ -43,11 +44,14 @@ EXPECTED_WINDOW_COUNTS = {
     "Lineage2M": 9,
 }
 
+_log_queue: queue.Queue = queue.Queue()
+
 
 def log(message):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {message}"
     print(line)
+    _log_queue.put(line)
 
     try:
         with open(LOG_PATH, "a", encoding="utf-8") as file:
@@ -76,11 +80,16 @@ class AutoButtonGrid:
         self.parent = parent
         self.on_click = on_click
         self.columns = columns
+        self.buttons: list[ttk.Button] = []
+        self._fixed_disabled: set[int] = set()
 
         for col in range(columns):
             parent.columnconfigure(col, weight=1)
 
     def render(self, actions):
+        self.buttons.clear()
+        self._fixed_disabled.clear()
+
         if not actions:
             placeholder = tk.Label(
                 self.parent,
@@ -104,8 +113,20 @@ class AutoButtonGrid:
 
             if not spec.enabled:
                 button.state(["disabled"])
+                self._fixed_disabled.add(index)
 
             button.grid(row=row, column=col, padx=6, pady=6, sticky="ew")
+            self.buttons.append(button)
+
+    def set_locked(self, locked: bool):
+        target = ["disabled"] if locked else ["!disabled"]
+        for i, btn in enumerate(self.buttons):
+            if i in self._fixed_disabled:
+                continue
+            try:
+                btn.state(target)
+            except Exception:
+                pass
 
 
 class ControlCenterApp:
@@ -116,13 +137,26 @@ class ControlCenterApp:
         self.root.geometry(APP_SIZE)
         self.root.configure(bg="#0b1220")
 
-        self.board_frames = {}
+        self.board_frames: dict[str, tk.Frame] = {}
         self.content_frame = None
         self.board_canvas = None
         self.board_scrollbar = None
         self.board_container = None
         self.health_label = None
+        self.status_label = None
         self.safety_label = None
+        self._log_text = None
+        self._log_toggle_btn = None
+        self._log_container = None
+        self._grids: list[AutoButtonGrid] = []
+        self._macro_builder_active = False
+        self._macro_manager_active = False
+        self._tick_id = None
+        self._flush_id = None
+        self._log_line_count = 0
+        self._health_tick_counter = 0
+        self._last_cooldown_remaining = -1
+
         self.emergency_stop = False
         self.last_run_at = 0.0
         self.active_action_count = 0
@@ -138,7 +172,8 @@ class ControlCenterApp:
         self._render_boards()
         self._update_health_label()
 
-        self.root.after(5000, self._health_tick)
+        self._tick_id = self.root.after(500, self._tick)
+        self._flush_id = self.root.after(300, self._flush_log_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_providers(self):
@@ -189,7 +224,8 @@ class ControlCenterApp:
         )
         style.map(
             "Board.TButton",
-            background=[("active", "#30415c"), ("pressed", "#3a4d6c")],
+            background=[("active", "#30415c"), ("pressed", "#3a4d6c"), ("disabled", "#141e2b")],
+            foreground=[("disabled", "#3d4f62")],
         )
 
         style.configure(
@@ -220,6 +256,20 @@ class ControlCenterApp:
             background=[("active", "#991b1b"), ("pressed", "#7f1d1d")],
         )
 
+        style.configure(
+            "Warning.TButton",
+            font=("Malgun Gothic", 10, "bold"),
+            padding=(12, 8),
+            foreground="#fff7e6",
+            background="#d97706",
+            borderwidth=0,
+            relief="flat",
+        )
+        style.map(
+            "Warning.TButton",
+            background=[("active", "#b45309"), ("pressed", "#92400e")],
+        )
+
         style.configure("Panel.TCombobox", padding=6)
 
     def _build_layout(self):
@@ -242,22 +292,33 @@ class ControlCenterApp:
         )
         self.health_label.pack(fill="x")
 
+        self.status_label = tk.Label(
+            left,
+            text="● 대기 중",
+            bg="#0b1220",
+            fg="#4ade80",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        )
+        self.status_label.pack(fill="x", pady=(3, 0))
+
         right = tk.Frame(top_bar, bg="#0b1220")
         right.pack(side="right")
 
         self.safety_label = tk.Label(
             right,
-            text=f"cooldown {ACTION_COOLDOWN_SECONDS}s | timeout {ACTION_TIMEOUT_SECONDS}s",
+            text=f"cooldown {ACTION_COOLDOWN_SECONDS}s  |  timeout {ACTION_TIMEOUT_SECONDS}s",
             bg="#0b1220",
             fg="#93c5fd",
             font=("Malgun Gothic", 9, "bold"),
         )
-        self.safety_label.pack(side="left", padx=(0, 8))
+        self.safety_label.pack(side="left", padx=(0, 12))
 
         ttk.Button(right, text="긴급 정지", style="Danger.TButton", command=self._activate_emergency_stop).pack(side="left")
         ttk.Button(right, text="정지 해제", style="Board.TButton", command=self._release_emergency_stop).pack(side="left", padx=(8, 0))
-        ttk.Button(right, text="창 초기화", style="Board.TButton", command=self._reset_windows).pack(side="left", padx=(8, 0))
+        ttk.Button(right, text="창 초기화", style="Warning.TButton", command=self._reset_windows).pack(side="left", padx=(8, 0))
 
+        # ── board canvas ─────────────────────────────────────────────────────
         content_shell = tk.Frame(shell, bg="#0b1220")
         content_shell.pack(fill="both", expand=True)
 
@@ -288,6 +349,63 @@ class ControlCenterApp:
         self.board_canvas.bind("<Configure>", self._resize_board_container)
         self.board_canvas.bind_all("<MouseWheel>", self._on_board_mousewheel)
 
+        log_bar = tk.Frame(shell, bg="#0b1220")
+        log_bar.pack(fill="x", pady=(8, 0))
+
+        log_header = tk.Frame(log_bar, bg="#131f2e")
+        log_header.pack(fill="x")
+
+        self._log_toggle_btn = ttk.Button(
+            log_header,
+            text="▶  로그",
+            style="Board.TButton",
+            command=self._toggle_log_panel,
+        )
+        self._log_toggle_btn.pack(side="left", padx=8, pady=4)
+
+        tk.Label(
+            log_header,
+            text="실행 기록",
+            bg="#131f2e",
+            fg="#475569",
+            font=("Malgun Gothic", 9),
+        ).pack(side="left", pady=4)
+
+        ttk.Button(
+            log_header,
+            text="지우기",
+            style="Board.TButton",
+            command=self._clear_log,
+        ).pack(side="right", padx=8, pady=4)
+
+        self._log_container = tk.Frame(log_bar, bg="#080e18")
+
+        self._log_text = tk.Text(
+            self._log_container,
+            height=9,
+            bg="#080e18",
+            fg="#94a3b8",
+            insertbackground="#94a3b8",
+            font=("Consolas", 9),
+            state="disabled",
+            wrap="none",
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self._log_text.tag_configure("start", foreground="#60a5fa")
+        self._log_text.tag_configure("done", foreground="#4ade80")
+        self._log_text.tag_configure("error", foreground="#f87171")
+        self._log_text.tag_configure("warn", foreground="#fbbf24")
+        self._log_text.tag_configure("normal", foreground="#64748b")
+
+        log_vsb = ttk.Scrollbar(self._log_container, orient="vertical", command=self._log_text.yview)
+        log_hsb = ttk.Scrollbar(self._log_container, orient="horizontal", command=self._log_text.xview)
+        self._log_text.configure(yscrollcommand=log_vsb.set, xscrollcommand=log_hsb.set)
+
+        log_vsb.pack(side="right", fill="y")
+        log_hsb.pack(side="bottom", fill="x")
+        self._log_text.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=4)
+
     def _sync_board_scrollregion(self, event=None):
         if self.board_canvas is None:
             return
@@ -310,6 +428,7 @@ class ControlCenterApp:
             child.destroy()
 
         self.board_frames.clear()
+        self._grids.clear()
 
         columns = 2
         rows = max(1, math.ceil(len(self.board_specs) / columns))
@@ -361,7 +480,9 @@ class ControlCenterApp:
             self.board_frames[board.id] = inner
 
             actions = [spec for spec in self.action_specs if spec.board == board.id]
-            AutoButtonGrid(inner, on_click=self.request_run, columns=board.columns).render(actions)
+            grid = AutoButtonGrid(inner, on_click=self.request_run, columns=board.columns)
+            grid.render(actions)
+            self._grids.append(grid)
 
         self.content_frame.update_idletasks()
         self._sync_board_scrollregion()
@@ -391,6 +512,7 @@ class ControlCenterApp:
         popup.geometry("260x160")
         popup.configure(bg="#ffffff")
         popup.attributes("-topmost", True)
+        popup.grab_set()
 
         tk.Label(
             popup,
@@ -411,6 +533,7 @@ class ControlCenterApp:
 
         def tick(value):
             if value == 0:
+                popup.grab_release()
                 popup.destroy()
                 self._start_action(spec)
                 return
@@ -456,6 +579,9 @@ class ControlCenterApp:
             self.active_action_count += 1
             self.last_run_at = now
 
+        self._set_boards_locked(True)
+        self._update_status_label(f"실행 중: {spec.label}", "#60a5fa")
+
         if spec.minimize_gui:
             try:
                 self.root.iconify()
@@ -474,6 +600,10 @@ class ControlCenterApp:
             self.root.focus_force()
         except Exception:
             pass
+
+        self._set_boards_locked(False)
+        if not self.emergency_stop:
+            self._update_status_label("대기 중", "#4ade80")
 
     def _run_with_timeout(self, spec: ActionSpec):
         holder = {"result": None, "error": None}
@@ -503,12 +633,25 @@ class ControlCenterApp:
             if hasattr(provider, "RUNNING"):
                 provider.RUNNING = False
 
+    def _set_boards_locked(self, locked: bool):
+        for grid in self._grids:
+            grid.set_locked(locked)
+
     def _activate_emergency_stop(self):
         self.emergency_stop = True
         self._stop_all_running_actions()
+        self._set_boards_locked(True)
+        self._update_status_label("긴급 정지", "#f87171")
         if self.safety_label is not None:
-            self.safety_label.config(text="EMERGENCY STOP ON", fg="#fca5a5")
+            self.safety_label.config(text="EMERGENCY STOP", fg="#f87171")
         log("EMERGENCY STOP ON")
+
+    def _release_emergency_stop(self):
+        self.emergency_stop = False
+        self._last_cooldown_remaining = -1
+        self._set_boards_locked(False)
+        self._update_status_label("대기 중", "#4ade80")
+        log("EMERGENCY STOP OFF")
 
     def _reset_windows(self):
         failed = []
@@ -520,38 +663,121 @@ class ControlCenterApp:
                 log(f"RESET WINDOWS FAILED {title} / {exc}")
 
         if failed:
-            messagebox.showwarning("창 초기화", f"일부 창을 불러오지 못했습니다:\n" + "\n".join(failed), parent=self.root)
+            messagebox.showwarning("창 초기화", "일부 창을 불러오지 못했습니다:\n" + "\n".join(failed), parent=self.root)
         else:
             log("RESET WINDOWS OK")
 
-    def _release_emergency_stop(self):
-        self.emergency_stop = False
-        if self.safety_label is not None:
-            self.safety_label.config(
-                text=f"cooldown {ACTION_COOLDOWN_SECONDS}s | timeout {ACTION_TIMEOUT_SECONDS}s",
-                fg="#93c5fd",
-            )
-        log("EMERGENCY STOP OFF")
+    def _update_status_label(self, text: str, color: str):
+        if self.status_label is not None:
+            self.status_label.config(text=f"● {text}", fg=color)
 
     def _update_health_label(self):
         if self.health_label is None:
             return
 
         lines = []
+        all_ok = True
 
         for title, expected in EXPECTED_WINDOW_COUNTS.items():
             current = count_windows(title)
+            if current < expected:
+                all_ok = False
             status = "정상" if current >= expected else "부족"
             lines.append(f"{title}: {current}/{expected} ({status})")
 
         if not lines:
-            lines = ["모니터링 대상 없음"]
+            self.health_label.config(text="모니터링 대상 없음", fg="#8da2c0")
+            return
 
-        self.health_label.config(text="  |  ".join(lines))
+        self.health_label.config(
+            text="  |  ".join(lines),
+            fg="#4ade80" if all_ok else "#f87171",
+        )
 
-    def _health_tick(self):
-        self._update_health_label()
-        self.root.after(5000, self._health_tick)
+    def _tick(self):
+        self._health_tick_counter += 1
+        if self._health_tick_counter >= 10:
+            self._health_tick_counter = 0
+            self._update_health_label()
+
+        if not self.emergency_stop and self.safety_label is not None:
+            elapsed = time.time() - self.last_run_at
+            remaining_int = int(max(0.0, ACTION_COOLDOWN_SECONDS - elapsed))
+            if remaining_int != self._last_cooldown_remaining:
+                self._last_cooldown_remaining = remaining_int
+                if remaining_int > 0:
+                    self.safety_label.config(
+                        text=f"쿨다운  {remaining_int}s 남음",
+                        fg="#fbbf24",
+                    )
+                else:
+                    self.safety_label.config(
+                        text=f"cooldown {ACTION_COOLDOWN_SECONDS}s  |  timeout {ACTION_TIMEOUT_SECONDS}s",
+                        fg="#93c5fd",
+                    )
+
+        self._tick_id = self.root.after(500, self._tick)
+
+    def _toggle_log_panel(self):
+        if self._log_container.winfo_ismapped():
+            self._log_container.pack_forget()
+            self._log_toggle_btn.configure(text="▶  로그")
+        else:
+            self._log_container.pack(fill="both", expand=False, pady=(1, 0))
+            self._log_toggle_btn.configure(text="▼  로그")
+            if self._log_text:
+                self._log_text.see("end")
+
+    def _clear_log(self):
+        if self._log_text is None:
+            return
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        self._log_text.configure(state="disabled")
+        self._log_line_count = 0
+
+    def _flush_log_queue(self):
+        if self._log_text is not None:
+            lines = []
+            try:
+                while True:
+                    lines.append(_log_queue.get_nowait())
+            except queue.Empty:
+                pass
+
+            if lines:
+                self._log_text.configure(state="normal")
+                for line in lines:
+                    self._append_log(line)
+                self._log_text.see("end")
+                self._log_text.configure(state="disabled")
+        else:
+            try:
+                while True:
+                    _log_queue.get_nowait()
+            except queue.Empty:
+                pass
+
+        self._flush_id = self.root.after(300, self._flush_log_queue)
+
+    def _append_log(self, line: str):
+        upper = line.upper()
+        if any(k in upper for k in ("EXCEPTION", "FAILED", "ERROR", "TIMEOUT")):
+            tag = "error"
+        elif any(k in upper for k in ("DONE", " OK")):
+            tag = "done"
+        elif "START" in upper:
+            tag = "start"
+        elif any(k in upper for k in ("STOP", "EMERGENCY", "MISSING")):
+            tag = "warn"
+        else:
+            tag = "normal"
+
+        self._log_text.insert("end", line + "\n", tag)
+        self._log_line_count += 1
+        if self._log_line_count > 500:
+            self._log_text.delete("1.0", "2.0")
+            self._log_line_count -= 1
 
     def _refresh_actions(self):
         self.action_specs = self._collect_actions()
@@ -568,11 +794,15 @@ class ControlCenterApp:
         return self.open_macro_builder()
 
     def open_macro_builder(self, action_id=None):
+        if self._macro_builder_active:
+            return False
+
         provider = self._get_macro_provider()
         if provider is None:
             messagebox.showerror("오류", "사용자 매크로 저장소를 찾을 수 없습니다.", parent=self.root)
             return False
 
+        self._macro_builder_active = True
         existing = provider.get_action(action_id) if action_id else None
         dialog = tk.Toplevel(self.root)
         dialog.title("Macro Builder")
@@ -613,7 +843,22 @@ class ControlCenterApp:
         self._build_labeled_entry(meta, "대상 창 제목", focus_var, 1, 0)
         self._build_labeled_entry(meta, "카운트다운", countdown_var, 1, 1)
         self._build_labeled_combo(meta, "반복 모드", loop_mode_var, ["횟수 반복", "무한 반복"], 2, 0)
-        self._build_labeled_entry(meta, "반복 횟수", loop_count_var, 2, 1)
+
+        _lc_frame = tk.Frame(meta, bg="#ffffff")
+        _lc_frame.grid(row=2, column=1, sticky="ew", padx=10, pady=(0, 10))
+        meta.columnconfigure(1, weight=1)
+        tk.Label(_lc_frame, text="반복 횟수", bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
+        loop_count_entry = ttk.Entry(_lc_frame, textvariable=loop_count_var)
+        loop_count_entry.pack(fill="x", pady=(4, 0))
+
+        def _on_loop_mode(*_):
+            if loop_mode_var.get() == "무한 반복":
+                loop_count_entry.state(["disabled"])
+            else:
+                loop_count_entry.state(["!disabled"])
+
+        loop_mode_var.trace_add("write", _on_loop_mode)
+        _on_loop_mode()
 
         toolbar = tk.Frame(root_card, bg="#ffffff")
         toolbar.pack(fill="x", padx=16, pady=(0, 10))
@@ -965,12 +1210,16 @@ class ControlCenterApp:
                 )
 
             self._refresh_actions()
-            dialog.destroy()
+            close_dialog()
             messagebox.showinfo("저장 완료", f"'{label}' 매크로를 저장했습니다.", parent=self.root)
 
         def close_dialog():
             state["recording"] = False
+            self._macro_builder_active = False
+            dialog.grab_release()
             dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
         ttk.Button(toolbar, text="녹화 시작", style="Primary.TButton", command=start_recording).pack(side="left")
         ttk.Button(toolbar, text="복제", style="Board.TButton", command=duplicate_selected).pack(side="left", padx=6)
@@ -993,11 +1242,15 @@ class ControlCenterApp:
         return True
 
     def open_macro_manager(self):
+        if self._macro_manager_active:
+            return False
+
         provider = self._get_macro_provider()
         if provider is None:
             messagebox.showerror("오류", "사용자 매크로 저장소를 찾을 수 없습니다.", parent=self.root)
             return False
 
+        self._macro_manager_active = True
         dialog = tk.Toplevel(self.root)
         dialog.title("동작 관리")
         dialog.geometry("620x520")
@@ -1035,7 +1288,7 @@ class ControlCenterApp:
             item = selected_action()
             if not item:
                 return
-            dialog.destroy()
+            close_dialog()
             self.open_macro_builder(item["id"])
 
         def delete_selected():
@@ -1046,14 +1299,21 @@ class ControlCenterApp:
                 return
             provider.delete_action(item["id"])
             self._refresh_actions()
-            dialog.destroy()
+            close_dialog()
             self.open_macro_manager()
+
+        def close_dialog():
+            self._macro_manager_active = False
+            dialog.grab_release()
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
         controls = tk.Frame(card, bg="#ffffff")
         controls.pack(fill="x", padx=16, pady=(0, 16))
         ttk.Button(controls, text="편집", style="Primary.TButton", command=edit_selected).pack(side="left")
         ttk.Button(controls, text="삭제", style="Danger.TButton", command=delete_selected).pack(side="left", padx=8)
-        ttk.Button(controls, text="닫기", style="Board.TButton", command=dialog.destroy).pack(side="right")
+        ttk.Button(controls, text="닫기", style="Board.TButton", command=close_dialog).pack(side="right")
 
         return True
 
@@ -1125,6 +1385,10 @@ class ControlCenterApp:
         return self._format_step(0, step).split(". ", 1)[-1]
 
     def _on_close(self):
+        if self._tick_id is not None:
+            self.root.after_cancel(self._tick_id)
+        if self._flush_id is not None:
+            self.root.after_cancel(self._flush_id)
         self._stop_all_running_actions()
         self.root.destroy()
 
