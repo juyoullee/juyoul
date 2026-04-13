@@ -25,15 +25,6 @@ class BoardSpec:
 
 
 @dataclass(frozen=True)
-class ScheduleSpec:
-    id: str
-    label: str
-    time_picker: Callable[[], str]
-    runner: Callable[[], None]
-    enabled: bool = True
-
-
-@dataclass(frozen=True)
 class AppSection:
     board: BoardSpec
     actions: list[ActionSpec] = field(default_factory=list)

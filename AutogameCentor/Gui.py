@@ -1,6 +1,5 @@
 import math
 import os
-import random
 import sys
 import threading
 import time
@@ -12,11 +11,10 @@ from tkinter import messagebox, ttk
 
 import keyboard
 import pyautogui
-import schedule
 
-from Core.action_specs import ActionSpec, BoardSpec, ScheduleSpec
+from Core.action_specs import ActionSpec, BoardSpec
 from Core.custom_actions import RecordedActionLibrary
-from Core.window_control import bring_to_front, count_windows, has_window, list_windows, minimize_window
+from Core.window_control import bring_to_front, count_windows, minimize_window
 from games.actions.Carbal import CarbalRed
 from games.actions.L2m import L2mDayDungeonAction, L2mDayilyAction
 from games.actions.Odin import Odin_Action
@@ -28,7 +26,7 @@ APP_SIZE = "1260x860"
 LOG_PATH = os.path.join(os.path.dirname(__file__), "controlcentor.log")
 CUSTOM_ACTIONS_PATH = os.path.join(os.path.dirname(__file__), "custom_actions.json")
 ACTION_COOLDOWN_SECONDS = 10
-ACTION_TIMEOUT_SECONDS = 600
+ACTION_TIMEOUT_SECONDS = 1800
 
 BOARD_OPTIONS = [
     ("odin", "ODIN"),
@@ -62,16 +60,6 @@ def log_exc(prefix="EXCEPTION"):
     log(prefix + "\n" + traceback.format_exc())
 
 
-def safe_focus(title):
-    if not title:
-        return
-
-    try:
-        bring_to_front(title)
-    except Exception as exc:
-        log(f"FOCUS FAILED {title} / {exc}")
-
-
 def safe_minimize(title):
     if not title:
         return
@@ -80,39 +68,6 @@ def safe_minimize(title):
         minimize_window(title)
     except Exception as exc:
         log(f"MINIMIZE FAILED {title} / {exc}")
-
-
-def validate_target_windows(title):
-    if not title:
-        return True, ""
-
-    windows = list_windows(title)
-    if not windows:
-        return False, f"대상 창이 없습니다: {title}"
-
-    expected = EXPECTED_WINDOW_COUNTS.get(title)
-    if expected is not None and len(windows) < expected:
-        return False, f"{title} 창이 {len(windows)}개만 감지되었습니다. 예상 개수: {expected}"
-
-    visible_count = sum(1 for item in windows if item["visible"])
-    if visible_count == 0:
-        return False, f"감지된 {title} 창이 모두 비가시 상태입니다."
-
-    return True, f"{title} 창 {len(windows)}개 감지"
-
-
-def pick_time(hour, start_min, end_min):
-    now = datetime.now()
-
-    if now.hour < hour:
-        return f"{hour:02d}:{random.randint(start_min, end_min):02d}"
-
-    if now.hour == hour:
-        start = max(start_min, now.minute + 1)
-        if start <= end_min:
-            return f"{hour:02d}:{random.randint(start, end_min):02d}"
-
-    return f"{hour:02d}:{random.randint(start_min, end_min):02d}"
 
 
 class AutoButtonGrid:
@@ -161,13 +116,12 @@ class ControlCenterApp:
         self.root.geometry(APP_SIZE)
         self.root.configure(bg="#0b1220")
 
-        self.schedule_items = {}
-        self.last_day = datetime.now().day
         self.board_frames = {}
         self.content_frame = None
         self.board_canvas = None
         self.board_scrollbar = None
         self.board_container = None
+        self.health_label = None
         self.safety_label = None
         self.emergency_stop = False
         self.last_run_at = 0.0
@@ -176,16 +130,15 @@ class ControlCenterApp:
 
         self.providers = self._build_providers()
         self.board_specs = self._build_board_specs()
-        self.schedule_specs = self._build_schedule_specs()
         self.action_specs = self._collect_actions()
         self.actions_by_id = {spec.id: spec for spec in self.action_specs}
 
         self._configure_style()
         self._build_layout()
         self._render_boards()
-        self._set_today_schedule()
+        self._update_health_label()
 
-        self.root.after(1000, self._scheduler_tick)
+        self.root.after(5000, self._health_tick)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_providers(self):
@@ -208,16 +161,6 @@ class ControlCenterApp:
             BoardSpec(id="carbal", title="CARBAL", columns=3),
             BoardSpec(id="l2m_dungeon", title="L2M Dungeon", columns=2),
             BoardSpec(id="l2m_custom", title="Macro Studio", columns=2),
-        ]
-
-    def _build_schedule_specs(self):
-        return [
-            ScheduleSpec(
-                id="schedule.carbal.daily",
-                label="카르발 데일리",
-                time_picker=lambda: pick_time(5, 0, 30),
-                runner=lambda: self._request_run_by_id("carbal.daily"),
-            ),
         ]
 
     def _collect_actions(self):
@@ -283,25 +226,11 @@ class ControlCenterApp:
         shell = tk.Frame(self.root, bg="#0b1220")
         shell.pack(fill="both", expand=True, padx=16, pady=16)
 
-        self.schedule_label = None
-        self.health_label = None
-        self.safety_label = None
-
         top_bar = tk.Frame(shell, bg="#0b1220")
         top_bar.pack(fill="x", pady=(0, 10))
 
         left = tk.Frame(top_bar, bg="#0b1220")
         left.pack(side="left", fill="x", expand=True)
-
-        self.schedule_label = tk.Label(
-            left,
-            text="schedule: -",
-            bg="#0b1220",
-            fg="#8da2c0",
-            font=("Malgun Gothic", 9),
-            anchor="w",
-        )
-        self.schedule_label.pack(fill="x")
 
         self.health_label = tk.Label(
             left,
@@ -311,7 +240,7 @@ class ControlCenterApp:
             font=("Malgun Gothic", 9),
             anchor="w",
         )
-        self.health_label.pack(fill="x", pady=(2, 0))
+        self.health_label.pack(fill="x")
 
         right = tk.Frame(top_bar, bg="#0b1220")
         right.pack(side="right")
@@ -327,6 +256,7 @@ class ControlCenterApp:
 
         ttk.Button(right, text="긴급 정지", style="Danger.TButton", command=self._activate_emergency_stop).pack(side="left")
         ttk.Button(right, text="정지 해제", style="Board.TButton", command=self._release_emergency_stop).pack(side="left", padx=(8, 0))
+        ttk.Button(right, text="창 초기화", style="Board.TButton", command=self._reset_windows).pack(side="left", padx=(8, 0))
 
         content_shell = tk.Frame(shell, bg="#0b1220")
         content_shell.pack(fill="both", expand=True)
@@ -446,20 +376,6 @@ class ControlCenterApp:
             return
         self.request_run(spec)
 
-    def _preflight_action(self, spec: ActionSpec):
-        if not spec.pre_focus:
-            return True
-
-        ok, message = validate_target_windows(spec.pre_focus)
-        if not ok:
-            log(f"PRECHECK FAILED {spec.id} / {message}")
-            messagebox.showwarning("실행 중단", message, parent=self.root)
-            self._restore_gui()
-            return False
-
-        log(f"PRECHECK OK {spec.id} / {message}")
-        return True
-
     def _show_countdown_and_run(self, spec: ActionSpec):
         if self.emergency_stop:
             messagebox.showwarning("실행 차단", "긴급 정지 상태입니다. 정지 해제 후 실행하세요.", parent=self.root)
@@ -507,9 +423,6 @@ class ControlCenterApp:
     def _run_action_task(self, spec: ActionSpec):
         try:
             log(f"START {spec.id} / {spec.label}")
-
-            if spec.pre_focus:
-                safe_focus(spec.pre_focus)
 
             if spec.background:
                 result = self._run_with_timeout(spec)
@@ -597,6 +510,20 @@ class ControlCenterApp:
             self.safety_label.config(text="EMERGENCY STOP ON", fg="#fca5a5")
         log("EMERGENCY STOP ON")
 
+    def _reset_windows(self):
+        failed = []
+        for title in EXPECTED_WINDOW_COUNTS:
+            try:
+                bring_to_front(title)
+            except Exception as exc:
+                failed.append(title)
+                log(f"RESET WINDOWS FAILED {title} / {exc}")
+
+        if failed:
+            messagebox.showwarning("창 초기화", f"일부 창을 불러오지 못했습니다:\n" + "\n".join(failed), parent=self.root)
+        else:
+            log("RESET WINDOWS OK")
+
     def _release_emergency_stop(self):
         self.emergency_stop = False
         if self.safety_label is not None:
@@ -606,22 +533,6 @@ class ControlCenterApp:
             )
         log("EMERGENCY STOP OFF")
 
-    def _update_schedule_label(self):
-        if self.schedule_label is None:
-            return
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        lines = [f"{item['time']}  {item['label']}" for item in self.schedule_items.values()]
-
-        if not lines:
-            summary = "??? ?? ??"
-        else:
-            summary = " / ".join(lines[:2])
-            if len(lines) > 2:
-                summary += f" ? {len(lines) - 2}?"
-
-        self.schedule_label.config(text=f"{today}  {summary}")
-
     def _update_health_label(self):
         if self.health_label is None:
             return
@@ -630,13 +541,18 @@ class ControlCenterApp:
 
         for title, expected in EXPECTED_WINDOW_COUNTS.items():
             current = count_windows(title)
-            status = "??" if current >= expected else "??"
+            status = "정상" if current >= expected else "부족"
             lines.append(f"{title}: {current}/{expected} ({status})")
 
         if not lines:
-            lines = ["?? ? ?? ??"]
+            lines = ["모니터링 대상 없음"]
 
         self.health_label.config(text="  |  ".join(lines))
+
+    def _health_tick(self):
+        self._update_health_label()
+        self.root.after(5000, self._health_tick)
+
     def _refresh_actions(self):
         self.action_specs = self._collect_actions()
         self.actions_by_id = {spec.id: spec for spec in self.action_specs}
@@ -647,612 +563,6 @@ class ControlCenterApp:
             if isinstance(provider, RecordedActionLibrary):
                 return provider
         return None
-
-    def open_macro_creator(self):
-        provider = self._get_macro_provider()
-        if provider is None:
-            messagebox.showerror("오류", "사용자 매크로 저장소를 찾을 수 없습니다.", parent=self.root)
-            return False
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title("동작 추가")
-        dialog.geometry("760x760")
-        dialog.minsize(760, 760)
-        dialog.configure(bg="#f4f7fb")
-        dialog.attributes("-topmost", True)
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        state = {
-            "recording": False,
-            "steps": [],
-            "last_time": None,
-            "drag_start": None,
-        }
-
-        name_var = tk.StringVar()
-        board_var = tk.StringVar(value="L2M Custom")
-        focus_var = tk.StringVar(value="Lineage2M")
-        countdown_var = tk.StringVar(value="3")
-        status_var = tk.StringVar(value="매크로 이름을 입력한 뒤 녹화를 시작하거나 수동 스텝을 추가하세요.")
-
-        card = tk.Frame(dialog, bg="#ffffff", highlightbackground="#d8e0ec", highlightthickness=1)
-        card.pack(fill="both", expand=True, padx=16, pady=16)
-
-        tk.Label(
-            card,
-            text="Macro Builder",
-            bg="#ffffff",
-            fg="#142033",
-            font=("Malgun Gothic", 16, "bold"),
-        ).pack(anchor="w", padx=16, pady=(16, 4))
-
-        tk.Label(
-            card,
-            text="녹화와 수동 입력을 섞어서 원하는 버튼 동작을 만들 수 있습니다.",
-            bg="#ffffff",
-            fg="#607086",
-            font=("Malgun Gothic", 10),
-        ).pack(anchor="w", padx=16, pady=(0, 12))
-
-        form = tk.Frame(card, bg="#ffffff")
-        form.pack(fill="x", padx=16)
-
-        self._build_labeled_entry(form, "버튼 이름", name_var, 0, 0)
-        self._build_labeled_combo(form, "배치 위치", board_var, [label for _, label in BOARD_OPTIONS], 0, 1)
-        self._build_labeled_entry(form, "대상 창 제목", focus_var, 1, 0)
-        self._build_labeled_entry(form, "카운트다운", countdown_var, 1, 1)
-
-        info_text = (
-            "녹화 단축키\n"
-            "F8: 클릭 기록\n"
-            "F9: 드래그 시작점 기록\n"
-            "F10: 드래그 종료점 기록\n"
-            "ESC: 녹화 종료"
-        )
-        info_box = tk.Label(
-            card,
-            text=info_text,
-            justify="left",
-            bg="#eef4ff",
-            fg="#24447a",
-            font=("Malgun Gothic", 10),
-            padx=12,
-            pady=10,
-        )
-        info_box.pack(fill="x", padx=16, pady=(14, 8))
-
-        tk.Label(
-            card,
-            textvariable=status_var,
-            bg="#ffffff",
-            fg="#166534",
-            font=("Malgun Gothic", 10, "bold"),
-        ).pack(anchor="w", padx=16, pady=(0, 8))
-
-        action_row = tk.Frame(card, bg="#ffffff")
-        action_row.pack(fill="x", padx=16, pady=(0, 12))
-
-        tabs = ttk.Notebook(card)
-        tabs.pack(fill="x", padx=16, pady=(0, 12))
-
-        manual_drag_tab = tk.Frame(tabs, bg="#ffffff")
-        pattern_tab = tk.Frame(tabs, bg="#ffffff")
-        window_tab = tk.Frame(tabs, bg="#ffffff")
-        delay_tab = tk.Frame(tabs, bg="#ffffff")
-        tabs.add(manual_drag_tab, text="드래그 입력")
-        tabs.add(pattern_tab, text="반복 패턴")
-        tabs.add(window_tab, text="창 반복")
-        tabs.add(delay_tab, text="대기 추가")
-
-        list_card = tk.Frame(card, bg="#f8fafc", highlightbackground="#d8e0ec", highlightthickness=1)
-        list_card.pack(fill="both", expand=True, padx=16, pady=(0, 12))
-
-        tk.Label(
-            list_card,
-            text="스텝 목록",
-            bg="#f8fafc",
-            fg="#142033",
-            font=("Malgun Gothic", 11, "bold"),
-        ).pack(anchor="w", padx=12, pady=(10, 6))
-
-        listbox = tk.Listbox(
-            list_card,
-            height=8,
-            font=("Consolas", 10),
-            activestyle="none",
-            borderwidth=0,
-            highlightthickness=0,
-        )
-        listbox.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-
-        drag_vars = {
-            "start_x": tk.StringVar(),
-            "start_y": tk.StringVar(),
-            "delta_x": tk.StringVar(),
-            "delta_y": tk.StringVar(),
-            "duration": tk.StringVar(value="0.25"),
-            "after": tk.StringVar(value="0.05"),
-        }
-        self._build_numeric_form(
-            manual_drag_tab,
-            [
-                ("시작 X", "start_x"),
-                ("시작 Y", "start_y"),
-                ("Delta X", "delta_x"),
-                ("Delta Y", "delta_y"),
-                ("지속시간", "duration"),
-                ("후 대기", "after"),
-            ],
-            drag_vars,
-        )
-
-        pattern_vars = {
-            "start_x": tk.StringVar(),
-            "start_y": tk.StringVar(),
-            "delta_x": tk.StringVar(),
-            "delta_y": tk.StringVar(),
-            "count": tk.StringVar(value="3"),
-            "after": tk.StringVar(value="0.08"),
-        }
-        self._build_numeric_form(
-            pattern_tab,
-            [
-                ("시작 X", "start_x"),
-                ("시작 Y", "start_y"),
-                ("X 증가", "delta_x"),
-                ("Y 증가", "delta_y"),
-                ("횟수", "count"),
-                ("클릭 후 대기", "after"),
-            ],
-            pattern_vars,
-        )
-
-        window_vars = {
-            "layout": tk.StringVar(value="L2M 9창 3x3"),
-            "mode": tk.StringVar(value="클릭"),
-            "base_x": tk.StringVar(),
-            "base_y": tk.StringVar(),
-            "delta_x": tk.StringVar(value="0"),
-            "delta_y": tk.StringVar(value="0"),
-            "duration": tk.StringVar(value="0.25"),
-            "after": tk.StringVar(value="0.08"),
-        }
-        self._build_labeled_combo(window_tab, "레이아웃", window_vars["layout"], [label for _, label in WINDOW_LAYOUT_OPTIONS], 0, 0)
-        self._build_labeled_combo(window_tab, "동작", window_vars["mode"], ["클릭", "드래그"], 0, 1)
-        window_fields = tk.Frame(window_tab, bg="#ffffff")
-        window_fields.grid(row=1, column=0, columnspan=3, sticky="ew")
-        self._build_numeric_form(
-            window_fields,
-            [
-                ("기준 X", "base_x"),
-                ("기준 Y", "base_y"),
-                ("Drag X", "delta_x"),
-                ("Drag Y", "delta_y"),
-                ("지속시간", "duration"),
-                ("후 대기", "after"),
-            ],
-            window_vars,
-        )
-
-        delay_vars = {"seconds": tk.StringVar(value="0.50")}
-        self._build_numeric_form(
-            delay_tab,
-            [("대기(초)", "seconds")],
-            delay_vars,
-            columns=1,
-        )
-
-        def add_wait_from_last(now):
-            if state["last_time"] is None:
-                return
-            delay = round(now - state["last_time"], 2)
-            if delay > 0:
-                state["steps"].append({"type": "sleep", "seconds": delay})
-
-        def redraw_steps():
-            listbox.delete(0, tk.END)
-            if not state["steps"]:
-                listbox.insert(tk.END, "기록된 스텝 없음")
-                return
-
-            for index, step in enumerate(state["steps"], start=1):
-                listbox.insert(tk.END, self._format_step(index, step))
-
-        def append_click_step():
-            now = time.time()
-            add_wait_from_last(now)
-
-            x, y = pyautogui.position()
-            state["steps"].append({"type": "click", "x": int(x), "y": int(y), "after": 0.05})
-            state["last_time"] = now
-            status_var.set(f"클릭 기록: ({x}, {y})")
-            redraw_steps()
-
-        def set_drag_start():
-            x, y = pyautogui.position()
-            state["drag_start"] = (int(x), int(y))
-            state["last_time"] = time.time()
-            status_var.set(f"드래그 시작점 기록: ({x}, {y})")
-
-        def append_drag_step():
-            if state["drag_start"] is None:
-                status_var.set("먼저 F9로 드래그 시작점을 기록하세요.")
-                return
-
-            now = time.time()
-            add_wait_from_last(now)
-
-            end_x, end_y = pyautogui.position()
-            start_x, start_y = state["drag_start"]
-            state["steps"].append(
-                {
-                    "type": "drag",
-                    "start_x": start_x,
-                    "start_y": start_y,
-                    "delta_x": int(end_x - start_x),
-                    "delta_y": int(end_y - start_y),
-                    "duration": 0.25,
-                    "after": 0.05,
-                }
-            )
-            state["drag_start"] = None
-            state["last_time"] = now
-            status_var.set(f"드래그 기록: ({start_x}, {start_y}) -> ({int(end_x)}, {int(end_y)})")
-            redraw_steps()
-
-        def finish_recording():
-            if not state["recording"]:
-                return
-
-            state["recording"] = False
-            self.root.after(0, self._restore_gui)
-            self.root.after(0, redraw_steps)
-            self.root.after(0, lambda: status_var.set("녹화가 종료되었습니다. 저장하거나 스텝을 더 추가하세요."))
-
-        def record_worker():
-            while state["recording"]:
-                if keyboard.is_pressed("esc"):
-                    finish_recording()
-                    return
-
-                if keyboard.is_pressed("f8"):
-                    self.root.after(0, append_click_step)
-                    time.sleep(0.35)
-                    continue
-
-                if keyboard.is_pressed("f9"):
-                    self.root.after(0, set_drag_start)
-                    time.sleep(0.35)
-                    continue
-
-                if keyboard.is_pressed("f10"):
-                    self.root.after(0, append_drag_step)
-                    time.sleep(0.35)
-                    continue
-
-                time.sleep(0.03)
-
-        def start_recording():
-            if state["recording"]:
-                return
-
-            state["steps"].clear()
-            state["last_time"] = None
-            state["drag_start"] = None
-            redraw_steps()
-            status_var.set("3초 뒤 녹화가 시작됩니다. F8 클릭, F9 시작점, F10 종료점, ESC 종료")
-
-            def begin():
-                state["recording"] = True
-                self.root.iconify()
-                threading.Thread(target=record_worker, daemon=True).start()
-
-            dialog.after(3000, begin)
-
-        def remove_selected_step():
-            selection = listbox.curselection()
-            if not selection:
-                return
-            del state["steps"][selection[0]]
-            status_var.set("선택한 스텝을 삭제했습니다.")
-            redraw_steps()
-
-        def add_manual_drag():
-            try:
-                step = {
-                    "type": "drag",
-                    "start_x": int(drag_vars["start_x"].get()),
-                    "start_y": int(drag_vars["start_y"].get()),
-                    "delta_x": int(drag_vars["delta_x"].get()),
-                    "delta_y": int(drag_vars["delta_y"].get()),
-                    "duration": float(drag_vars["duration"].get()),
-                    "after": float(drag_vars["after"].get()),
-                }
-            except ValueError:
-                messagebox.showwarning("확인", "드래그 입력값을 다시 확인하세요.", parent=dialog)
-                return
-
-            state["steps"].append(step)
-            status_var.set("수동 드래그 스텝을 추가했습니다.")
-            redraw_steps()
-
-        def add_repeat_pattern():
-            try:
-                step = {
-                    "type": "repeat_click_pattern",
-                    "start_x": int(pattern_vars["start_x"].get()),
-                    "start_y": int(pattern_vars["start_y"].get()),
-                    "delta_x": int(pattern_vars["delta_x"].get()),
-                    "delta_y": int(pattern_vars["delta_y"].get()),
-                    "count": int(pattern_vars["count"].get()),
-                    "after": float(pattern_vars["after"].get()),
-                }
-            except ValueError:
-                messagebox.showwarning("확인", "반복 패턴 입력값을 다시 확인하세요.", parent=dialog)
-                return
-
-            if step["count"] <= 0:
-                messagebox.showwarning("확인", "횟수는 1 이상이어야 합니다.", parent=dialog)
-                return
-
-            state["steps"].append(step)
-            status_var.set("반복 클릭 패턴을 추가했습니다.")
-            redraw_steps()
-
-        def add_window_pattern():
-            try:
-                layout_label = window_vars["layout"].get().strip()
-                layout_key = next(
-                    (item_id for item_id, item_label in WINDOW_LAYOUT_OPTIONS if item_label == layout_label),
-                    None,
-                )
-                if layout_key is None:
-                    raise ValueError
-
-                base_x = int(window_vars["base_x"].get())
-                base_y = int(window_vars["base_y"].get())
-                after = float(window_vars["after"].get())
-                mode = window_vars["mode"].get().strip()
-
-                if mode == "클릭":
-                    step = {
-                        "type": "window_grid_click",
-                        "layout": layout_key,
-                        "base_x": base_x,
-                        "base_y": base_y,
-                        "after": after,
-                    }
-                else:
-                    step = {
-                        "type": "window_grid_drag",
-                        "layout": layout_key,
-                        "base_x": base_x,
-                        "base_y": base_y,
-                        "delta_x": int(window_vars["delta_x"].get()),
-                        "delta_y": int(window_vars["delta_y"].get()),
-                        "duration": float(window_vars["duration"].get()),
-                        "after": after,
-                    }
-            except ValueError:
-                messagebox.showwarning("확인", "창 반복 입력값을 다시 확인하세요.", parent=dialog)
-                return
-
-            state["steps"].append(step)
-            status_var.set("창 반복 스텝을 추가했습니다.")
-            redraw_steps()
-
-        def add_manual_delay():
-            try:
-                seconds = float(delay_vars["seconds"].get())
-            except ValueError:
-                messagebox.showwarning("확인", "대기 시간을 숫자로 입력하세요.", parent=dialog)
-                return
-
-            state["steps"].append({"type": "sleep", "seconds": seconds})
-            status_var.set("대기 스텝을 추가했습니다.")
-            redraw_steps()
-
-        def save_recording():
-            label = name_var.get().strip()
-            if not label:
-                messagebox.showwarning("확인", "버튼 이름을 입력하세요.", parent=dialog)
-                return
-
-            if not state["steps"]:
-                messagebox.showwarning("확인", "스텝이 비어 있습니다.", parent=dialog)
-                return
-
-            try:
-                countdown = int(countdown_var.get().strip())
-            except ValueError:
-                messagebox.showwarning("확인", "카운트다운은 숫자로 입력하세요.", parent=dialog)
-                return
-
-            board_label = board_var.get().strip()
-            board_id = next((item_id for item_id, item_label in BOARD_OPTIONS if item_label == board_label), None)
-            if board_id is None:
-                messagebox.showwarning("확인", "배치 위치를 선택하세요.", parent=dialog)
-                return
-
-            provider.save_action(
-                label=label,
-                steps=state["steps"],
-                board=board_id,
-                pre_focus=focus_var.get().strip(),
-                countdown=countdown,
-            )
-            self._refresh_actions()
-            dialog.destroy()
-            messagebox.showinfo("저장 완료", f"'{label}' 버튼을 추가했습니다.", parent=self.root)
-
-        def close_dialog():
-            state["recording"] = False
-            dialog.destroy()
-
-        ttk.Button(action_row, text="녹화 시작", style="Primary.TButton", command=start_recording).pack(side="left")
-        ttk.Button(action_row, text="선택 스텝 삭제", style="Danger.TButton", command=remove_selected_step).pack(side="left", padx=8)
-        ttk.Button(action_row, text="저장", style="Board.TButton", command=save_recording).pack(side="right")
-        ttk.Button(action_row, text="닫기", style="Board.TButton", command=close_dialog).pack(side="right", padx=(0, 8))
-
-        ttk.Button(manual_drag_tab, text="드래그 스텝 추가", style="Board.TButton", command=add_manual_drag).grid(
-            row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10)
-        )
-        ttk.Button(pattern_tab, text="반복 패턴 추가", style="Board.TButton", command=add_repeat_pattern).grid(
-            row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10)
-        )
-        ttk.Button(window_tab, text="창 반복 추가", style="Board.TButton", command=add_window_pattern).grid(
-            row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10)
-        )
-        ttk.Button(delay_tab, text="대기 스텝 추가", style="Board.TButton", command=add_manual_delay).grid(
-            row=1, column=0, sticky="ew", padx=10, pady=(6, 10)
-        )
-
-        redraw_steps()
-        return True
-
-    def open_macro_manager(self):
-        provider = self._get_macro_provider()
-        if provider is None:
-            messagebox.showerror("오류", "사용자 매크로 저장소를 찾을 수 없습니다.", parent=self.root)
-            return False
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title("동작 관리")
-        dialog.geometry("520x480")
-        dialog.configure(bg="#f4f7fb")
-        dialog.attributes("-topmost", True)
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        card = tk.Frame(dialog, bg="#ffffff", highlightbackground="#d8e0ec", highlightthickness=1)
-        card.pack(fill="both", expand=True, padx=16, pady=16)
-
-        tk.Label(
-            card,
-            text="Saved Macros",
-            bg="#ffffff",
-            fg="#142033",
-            font=("Malgun Gothic", 15, "bold"),
-        ).pack(anchor="w", padx=16, pady=(16, 6))
-
-        tk.Label(
-            card,
-            text="사용자 매크로를 삭제하면 즉시 GUI에서도 사라집니다.",
-            bg="#ffffff",
-            fg="#607086",
-            font=("Malgun Gothic", 10),
-        ).pack(anchor="w", padx=16, pady=(0, 10))
-
-        listbox = tk.Listbox(card, font=("Consolas", 10), activestyle="none", borderwidth=0, highlightthickness=0)
-        listbox.pack(fill="both", expand=True, padx=16, pady=(0, 12))
-
-        actions = provider.load_actions()
-
-        def redraw():
-            listbox.delete(0, tk.END)
-            if not actions:
-                listbox.insert(tk.END, "저장된 사용자 매크로가 없습니다.")
-                return
-
-            for item in actions:
-                board_label = BOARD_LABELS.get(item.get("board", "l2m_custom"), item.get("board", "l2m_custom"))
-                listbox.insert(tk.END, f"{item['label']}    [{board_label}]")
-
-        def delete_selected():
-            selection = listbox.curselection()
-            if not selection or not actions:
-                return
-
-            item = actions[selection[0]]
-            answer = messagebox.askyesno(
-                "삭제 확인",
-                f"'{item['label']}' 버튼을 삭제할까요?",
-                parent=dialog,
-            )
-            if not answer:
-                return
-
-            provider.delete_action(item["id"])
-            actions[:] = provider.load_actions()
-            self._refresh_actions()
-            redraw()
-
-        controls = tk.Frame(card, bg="#ffffff")
-        controls.pack(fill="x", padx=16, pady=(0, 16))
-
-        ttk.Button(controls, text="삭제", style="Danger.TButton", command=delete_selected).pack(side="left")
-        ttk.Button(controls, text="닫기", style="Board.TButton", command=dialog.destroy).pack(side="right")
-
-        redraw()
-        return True
-
-    def _build_labeled_entry(self, parent, label, variable, row, column):
-        frame = tk.Frame(parent, bg="#ffffff")
-        frame.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0), pady=(0, 10))
-        parent.columnconfigure(column, weight=1)
-
-        tk.Label(frame, text=label, bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
-        ttk.Entry(frame, textvariable=variable).pack(fill="x", pady=(4, 0))
-
-    def _build_labeled_combo(self, parent, label, variable, values, row, column):
-        frame = tk.Frame(parent, bg="#ffffff")
-        frame.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0), pady=(0, 10))
-        parent.columnconfigure(column, weight=1)
-
-        tk.Label(frame, text=label, bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
-        ttk.Combobox(frame, textvariable=variable, values=values, state="readonly", style="Panel.TCombobox").pack(fill="x", pady=(4, 0))
-
-    def _build_numeric_form(self, parent, fields, variables, columns=3):
-        for col in range(columns):
-            parent.columnconfigure(col, weight=1)
-
-        for index, (label, key) in enumerate(fields):
-            row, col = divmod(index, columns)
-            frame = tk.Frame(parent, bg="#ffffff")
-            frame.grid(row=row, column=col, sticky="ew", padx=10, pady=(10, 0))
-            tk.Label(frame, text=label, bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
-            ttk.Entry(frame, textvariable=variables[key]).pack(fill="x", pady=(4, 0))
-
-    def _format_step(self, index, step):
-        step_type = step["type"]
-
-        if step_type == "click":
-            return f"{index:02d}. CLICK x={step['x']} y={step['y']} after={step.get('after', 0.05):.2f}"
-
-        if step_type == "sleep":
-            return f"{index:02d}. WAIT  {step['seconds']:.2f}s"
-
-        if step_type == "drag":
-            return (
-                f"{index:02d}. DRAG  start=({step['start_x']}, {step['start_y']}) "
-                f"delta=({step['delta_x']}, {step['delta_y']}) "
-                f"dur={step.get('duration', 0.25):.2f}"
-            )
-
-        if step_type == "repeat_click_pattern":
-            return (
-                f"{index:02d}. REPEAT start=({step['start_x']}, {step['start_y']}) "
-                f"delta=({step['delta_x']}, {step['delta_y']}) x{step['count']}"
-            )
-
-        if step_type == "window_grid_click":
-            return (
-                f"{index:02d}. GRID-CLICK layout={step.get('layout', 'l2m_9_grid')} "
-                f"base=({step['base_x']}, {step['base_y']})"
-            )
-
-        if step_type == "window_grid_drag":
-            return (
-                f"{index:02d}. GRID-DRAG layout={step.get('layout', 'l2m_9_grid')} "
-                f"base=({step['base_x']}, {step['base_y']}) "
-                f"delta=({step['delta_x']}, {step['delta_y']})"
-            )
-
-        return f"{index:02d}. {step_type}"
-
-    def _step_summary(self, step):
-        return self._format_step(0, step).split(". ", 1)[-1]
 
     def open_macro_creator(self):
         return self.open_macro_builder()
@@ -1747,46 +1057,75 @@ class ControlCenterApp:
 
         return True
 
-    def _set_today_schedule(self):
-        schedule.clear()
-        self.schedule_items.clear()
+    def _build_labeled_entry(self, parent, label, variable, row, column):
+        frame = tk.Frame(parent, bg="#ffffff")
+        frame.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0), pady=(0, 10))
+        parent.columnconfigure(column, weight=1)
 
-        for spec in self.schedule_specs:
-            if not spec.enabled:
-                continue
+        tk.Label(frame, text=label, bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
+        ttk.Entry(frame, textvariable=variable).pack(fill="x", pady=(4, 0))
 
-            time_str = spec.time_picker()
-            schedule.every().day.at(time_str).do(spec.runner)
-            self.schedule_items[spec.id] = {
-                "label": spec.label,
-                "time": time_str,
-            }
+    def _build_labeled_combo(self, parent, label, variable, values, row, column):
+        frame = tk.Frame(parent, bg="#ffffff")
+        frame.grid(row=row, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0), pady=(0, 10))
+        parent.columnconfigure(column, weight=1)
 
-        self._update_schedule_label()
-        self._update_health_label()
+        tk.Label(frame, text=label, bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
+        ttk.Combobox(frame, textvariable=variable, values=values, state="readonly", style="Panel.TCombobox").pack(fill="x", pady=(4, 0))
 
-    def _scheduler_tick(self):
-        try:
-            schedule.run_pending()
-        except Exception:
-            log_exc("SCHEDULER")
+    def _build_numeric_form(self, parent, fields, variables, columns=3):
+        for col in range(columns):
+            parent.columnconfigure(col, weight=1)
 
-        if datetime.now().day != self.last_day:
-            self.last_day = datetime.now().day
-            self._set_today_schedule()
+        for index, (label, key) in enumerate(fields):
+            row, col = divmod(index, columns)
+            frame = tk.Frame(parent, bg="#ffffff")
+            frame.grid(row=row, column=col, sticky="ew", padx=10, pady=(10, 0))
+            tk.Label(frame, text=label, bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
+            ttk.Entry(frame, textvariable=variables[key]).pack(fill="x", pady=(4, 0))
 
-        self._update_health_label()
+    def _format_step(self, index, step):
+        step_type = step["type"]
 
-        self.root.after(1000, self._scheduler_tick)
+        if step_type == "click":
+            return f"{index:02d}. CLICK x={step['x']} y={step['y']} after={step.get('after', 0.05):.2f}"
+
+        if step_type == "sleep":
+            return f"{index:02d}. WAIT  {step['seconds']:.2f}s"
+
+        if step_type == "drag":
+            return (
+                f"{index:02d}. DRAG  start=({step['start_x']}, {step['start_y']}) "
+                f"delta=({step['delta_x']}, {step['delta_y']}) "
+                f"dur={step.get('duration', 0.25):.2f}"
+            )
+
+        if step_type == "repeat_click_pattern":
+            return (
+                f"{index:02d}. REPEAT start=({step['start_x']}, {step['start_y']}) "
+                f"delta=({step['delta_x']}, {step['delta_y']}) x{step['count']}"
+            )
+
+        if step_type == "window_grid_click":
+            return (
+                f"{index:02d}. GRID-CLICK layout={step.get('layout', 'l2m_9_grid')} "
+                f"base=({step['base_x']}, {step['base_y']})"
+            )
+
+        if step_type == "window_grid_drag":
+            return (
+                f"{index:02d}. GRID-DRAG layout={step.get('layout', 'l2m_9_grid')} "
+                f"base=({step['base_x']}, {step['base_y']}) "
+                f"delta=({step['delta_x']}, {step['delta_y']})"
+            )
+
+        return f"{index:02d}. {step_type}"
+
+    def _step_summary(self, step):
+        return self._format_step(0, step).split(". ", 1)[-1]
 
     def _on_close(self):
-        try:
-            schedule.clear()
-        except Exception:
-            pass
-
         self._stop_all_running_actions()
-
         self.root.destroy()
 
     def run(self):
