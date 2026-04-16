@@ -8,6 +8,4 @@ echo [1/2] 최신 버전 확인 중...
 git pull
 echo.
 echo [2/2] ControlCentor 실행 중...
-python AutogameCentor/Gui.py
-echo.
-pause
+start "" pythonw AutogameCentor/Gui.py
