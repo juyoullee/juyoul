@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git -C /d/MyProject diff HEAD -- AutogameCentor/Gui.py)"
+      "Bash(git -C /d/MyProject diff HEAD -- AutogameCentor/Gui.py)",
+      "Bash(python -c \"import pyautogui; import keyboard; import win32gui; print\\('패키지 OK'\\)\")"
     ]
   }
 }
