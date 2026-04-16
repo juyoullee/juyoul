@@ -3,5 +3,5 @@ __pycache__/
 
 .vscode/
 
-AutogameCentor/controlcentor.log
+*.log
 AutogameCentor/custom_actions.json
