@@ -51,7 +51,9 @@ class L2mDayilyAction(ActionsBase):
             ActionSpec(id="l2m.yeopo_click", label="여포클릭", runner=self.여포클릭, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.yeopo_shop", label="고참상점", runner=self.고참상점, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.power_save_off", label="절전해제", runner=self.절전해제, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.power_save_off", label="전체마을귀환", runner=self.전체마을귀환, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.return_town", label="전체마을귀환", runner=self.전체마을귀환, board="l2m_dungeon", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.party_disband", label="파티해체", runner=self.파티해체, board="l2m_dungeon", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.party_disband", label="스케줄러실행", runner=self.스케줄러실행, board="l2m_dungeon", pre_focus="리니지2M"),
         ]
 
     def _focus_and_reset(self, rx, ry):
@@ -91,6 +93,8 @@ class L2mDayilyAction(ActionsBase):
     고참상점 = lambda self: self._run_windows(L2mCoordinates.고참상점)
     절전해제 = lambda self: self._run_windows(L2mCoordinates.절전해제)
     전체마을귀환 = lambda self: self._run_windows(L2mCoordinates.전체마을귀환)
+    파티해체 = lambda self: self._run_windows(L2mCoordinates.파티해체)
+    스케줄러실행 = lambda self: self._run_windows(L2mCoordinates.스케줄러실행)
 
     def 전체루틴(self):
         for fn in [self.UL데일리, self.UL물약구매, self.UL캐시상점, self.창최소화]:
