@@ -42,10 +42,12 @@ class ActionsBase:
             self.RUNNING = False
             return False
 
-        rx = x + random.randint(-1, 1)
-        ry = y + random.randint(-1, 1)
+        rx = x + random.randint(-4, 4)
+        ry = y + random.randint(-4, 4)
 
-        pyautogui.click(rx, ry)
+        pyautogui.moveTo(rx, ry, duration=random.uniform(0.05, 0.18))
+        time.sleep(random.uniform(0.03, 0.08))
+        pyautogui.click()
 
         return self.esc_sleep(timer)
 

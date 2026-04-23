@@ -1,10 +1,12 @@
 import json
 import os
+import random
 import threading
 import time
 import tkinter as tk
 from tkinter import ttk, filedialog
 
+import keyboard
 import pyautogui
 from PIL import Image, ImageTk, ImageGrab
 
@@ -76,9 +78,19 @@ class NightCrowImageSearch(ActionsBase):
     def _stop_loop(self):
         self._running = False
         self.RUNNING = False
+        self._restore_panel()
+
+    def _restore_panel(self):
+        if self._panel and self._panel.is_open():
+            self._panel.schedule_restore()
 
     def _search_loop(self):
         while self._running and self.RUNNING:
+            if keyboard.is_pressed("esc"):
+                self._running = False
+                self.RUNNING = False
+                break
+
             for path in list(self._image_paths):
                 if not self._running:
                     break
@@ -91,17 +103,25 @@ class NightCrowImageSearch(ActionsBase):
                         loc = pyautogui.locateOnScreen(path)
 
                     if loc:
-                        cx, cy = pyautogui.center(loc)
-                        pyautogui.click(cx, cy)
-                        time.sleep(0.5)
+                        margin_x = max(2, int(loc.width * 0.15))
+                        margin_y = max(2, int(loc.height * 0.15))
+                        tx = random.randint(loc.left + margin_x, loc.left + loc.width - margin_x)
+                        ty = random.randint(loc.top + margin_y, loc.top + loc.height - margin_y)
+
+                        pyautogui.moveTo(tx, ty, duration=random.uniform(0.10, 0.30))
+                        time.sleep(random.uniform(0.04, 0.12))
+                        pyautogui.click()
+                        time.sleep(random.uniform(0.35, 0.75))
+
                 except pyautogui.ImageNotFoundException:
                     pass
                 except Exception:
                     pass
 
-            time.sleep(1)
+            time.sleep(random.uniform(0.7, 1.6))
 
         self._running = False
+        self._restore_panel()
 
 
 class _ScreenCaptureOverlay:
@@ -193,7 +213,19 @@ class NightCrowPanel:
         self._win.configure(bg="#0b1220")
         self._win.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
+        self._win.lift()
+        self._win.focus_force()
         self._tick()
+
+    def restore(self):
+        if self.is_open():
+            self._win.deiconify()
+            self._win.lift()
+            self._win.focus_force()
+
+    def schedule_restore(self):
+        if self.is_open():
+            self._win.after(0, self.restore)
 
     def is_open(self):
         return self._win is not None and self._win.winfo_exists()
@@ -202,6 +234,11 @@ class NightCrowPanel:
         if self.is_open():
             self._win.lift()
             self._win.focus_force()
+
+    def _on_start_clicked(self):
+        self._on_start()
+        if self.is_open():
+            self._win.iconify()
 
     def _on_close(self):
         if self._tick_id:
@@ -229,7 +266,7 @@ class NightCrowPanel:
             ctrl_frame,
             text="시작",
             style="Primary.TButton",
-            command=self._on_start,
+            command=self._on_start_clicked,
         )
         self._start_btn.pack(side="left", padx=(0, 6))
 
