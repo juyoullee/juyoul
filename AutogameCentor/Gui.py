@@ -18,6 +18,7 @@ from Core.custom_actions import RecordedActionLibrary
 from Core.window_control import bring_to_front, count_windows, minimize_window
 from games.actions.Carbal import CarbalRed
 from games.actions.L2m import L2mDayDungeonAction, L2mDayilyAction
+from games.actions.NightCrow import NightCrowImageSearch
 from games.actions.Odin import Odin_Action
 
 sys.dont_write_bytecode = True
@@ -35,6 +36,7 @@ BOARD_OPTIONS = [
     ("carbal", "CARBAL"),
     ("l2m_dungeon", "L2M Dungeon"),
     ("l2m_custom", "L2M Custom"),
+    ("nightcrow", "Night Crow"),
 ]
 BOARD_LABELS = {board_id: label for board_id, label in BOARD_OPTIONS}
 WINDOW_LAYOUT_OPTIONS = [
@@ -182,6 +184,7 @@ class ControlCenterApp:
             L2mDayilyAction(),
             CarbalRed(),
             L2mDayDungeonAction(),
+            NightCrowImageSearch(),
             RecordedActionLibrary(
                 CUSTOM_ACTIONS_PATH,
                 self.open_macro_creator,
@@ -196,6 +199,7 @@ class ControlCenterApp:
             BoardSpec(id="carbal", title="CARBAL", columns=3),
             BoardSpec(id="l2m_dungeon", title="L2M Dungeon", columns=2),
             BoardSpec(id="l2m_custom", title="Macro Studio", columns=2),
+            BoardSpec(id="nightcrow", title="Night Crow", columns=2),
         ]
 
     def _collect_actions(self):
