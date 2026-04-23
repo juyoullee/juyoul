@@ -17,6 +17,10 @@ _BASE_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")
 _IMAGES_DIR = os.path.join(_BASE_DIR, "nightcrow_images")
 _IMAGES_JSON = os.path.join(_BASE_DIR, "nightcrow_images.json")
 
+_CLICK_OPTIONS = ["좌클릭", "우클릭", "더블클릭"]
+_CLICK_MAP = {"좌클릭": "left", "우클릭": "right", "더블클릭": "double"}
+_CLICK_LABEL = {v: k for k, v in _CLICK_MAP.items()}
+
 
 class NightCrowImageSearch(ActionsBase):
     def __init__(self):
@@ -24,18 +28,21 @@ class NightCrowImageSearch(ActionsBase):
         self._running = False
         self._panel = None
         os.makedirs(_IMAGES_DIR, exist_ok=True)
-        self._image_paths = self._load_paths()
+        self._items = self._load_items()
 
-    def _load_paths(self):
+    def _load_items(self):
         try:
             with open(_IMAGES_JSON, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            if data and isinstance(data[0], str):
+                return [{"path": p, "click_type": "left"} for p in data]
+            return data
         except (FileNotFoundError, json.JSONDecodeError):
             return []
 
-    def _save_paths(self):
+    def _save_items(self):
         with open(_IMAGES_JSON, "w", encoding="utf-8") as f:
-            json.dump(self._image_paths, f, ensure_ascii=False, indent=2)
+            json.dump(self._items, f, ensure_ascii=False, indent=2)
 
     def get_action_specs(self):
         return [
@@ -55,18 +62,18 @@ class NightCrowImageSearch(ActionsBase):
             self._panel.lift()
             return
         self._panel = NightCrowPanel(
-            image_paths=self._image_paths,
+            items=self._items,
             images_dir=_IMAGES_DIR,
-            on_paths_changed=self._on_paths_changed,
+            on_items_changed=self._on_items_changed,
             on_start=self._start_loop,
             on_stop=self._stop_loop,
             is_running=lambda: self._running,
         )
         self._panel.open()
 
-    def _on_paths_changed(self, paths):
-        self._image_paths = paths
-        self._save_paths()
+    def _on_items_changed(self, items):
+        self._items = items
+        self._save_items()
 
     def _start_loop(self):
         if self._running:
@@ -91,9 +98,11 @@ class NightCrowImageSearch(ActionsBase):
                 self.RUNNING = False
                 break
 
-            for path in list(self._image_paths):
+            for item in list(self._items):
                 if not self._running:
                     break
+                path = item.get("path", "")
+                click_type = item.get("click_type", "left")
                 if not os.path.exists(path):
                     continue
                 try:
@@ -110,7 +119,14 @@ class NightCrowImageSearch(ActionsBase):
 
                         pyautogui.moveTo(tx, ty, duration=random.uniform(0.10, 0.30))
                         time.sleep(random.uniform(0.04, 0.12))
-                        pyautogui.click()
+
+                        if click_type == "right":
+                            pyautogui.click(button="right")
+                        elif click_type == "double":
+                            pyautogui.doubleClick()
+                        else:
+                            pyautogui.click()
+
                         time.sleep(random.uniform(0.35, 0.75))
 
                 except pyautogui.ImageNotFoundException:
@@ -192,10 +208,10 @@ class _ScreenCaptureOverlay:
 
 
 class NightCrowPanel:
-    def __init__(self, image_paths, images_dir, on_paths_changed, on_start, on_stop, is_running):
-        self._paths = list(image_paths)
+    def __init__(self, items, images_dir, on_items_changed, on_start, on_stop, is_running):
+        self._items = list(items)
         self._images_dir = images_dir
-        self._on_paths_changed = on_paths_changed
+        self._on_items_changed = on_items_changed
         self._on_start = on_start
         self._on_stop = on_stop
         self._is_running = is_running
@@ -209,7 +225,7 @@ class NightCrowPanel:
     def open(self):
         self._win = tk.Toplevel()
         self._win.title("Night Crow - 이미지 서치")
-        self._win.geometry("500x600")
+        self._win.geometry("520x600")
         self._win.configure(bg="#0b1220")
         self._win.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
@@ -338,7 +354,7 @@ class NightCrowPanel:
         for child in self._list_frame.winfo_children():
             child.destroy()
 
-        if not self._paths:
+        if not self._items:
             tk.Label(
                 self._list_frame,
                 text="등록된 이미지가 없습니다.\n화면 캡처 또는 파일 추가로 이미지를 등록하세요.",
@@ -349,7 +365,10 @@ class NightCrowPanel:
             ).pack(pady=24)
             return
 
-        for i, path in enumerate(self._paths):
+        for i, item in enumerate(self._items):
+            path = item.get("path", "")
+            click_type = item.get("click_type", "left")
+
             row = tk.Frame(self._list_frame, bg="#131f2e", pady=6)
             row.pack(fill="x", pady=2)
 
@@ -379,12 +398,34 @@ class NightCrowPanel:
                 anchor="w",
             ).pack(fill="x")
 
+            action_frame = tk.Frame(row, bg="#131f2e")
+            action_frame.pack(side="right", padx=8)
+
+            click_var = tk.StringVar(value=_CLICK_LABEL.get(click_type, "좌클릭"))
+            combo = ttk.Combobox(
+                action_frame,
+                textvariable=click_var,
+                values=_CLICK_OPTIONS,
+                state="readonly",
+                width=7,
+            )
+            combo.pack(side="top", pady=(0, 4))
+            combo.bind(
+                "<<ComboboxSelected>>",
+                lambda e, idx=i, var=click_var: self._on_click_type_changed(idx, var.get()),
+            )
+
             ttk.Button(
-                row,
+                action_frame,
                 text="삭제",
                 style="Board.TButton",
                 command=lambda ix=i: self._remove(ix),
-            ).pack(side="right", padx=8)
+            ).pack(side="top")
+
+    def _on_click_type_changed(self, index, label):
+        if 0 <= index < len(self._items):
+            self._items[index]["click_type"] = _CLICK_MAP.get(label, "left")
+            self._on_items_changed(self._items)
 
     def _load_thumbnail(self, label, path):
         try:
@@ -409,8 +450,8 @@ class NightCrowPanel:
         existing = [f for f in os.listdir(self._images_dir) if f.lower().endswith(".png")]
         save_path = os.path.join(self._images_dir, f"capture_{len(existing) + 1:03d}.png")
         img.save(save_path)
-        self._paths.append(save_path)
-        self._on_paths_changed(self._paths)
+        self._items.append({"path": save_path, "click_type": "left"})
+        self._on_items_changed(self._items)
         self._render_list()
 
     def _add_files(self):
@@ -419,19 +460,20 @@ class NightCrowPanel:
             filetypes=[("이미지", "*.png *.jpg *.jpeg *.bmp"), ("모든 파일", "*.*")],
             parent=self._win,
         )
+        existing_paths = {it["path"] for it in self._items}
         changed = False
         for path in files:
-            if path and path not in self._paths:
-                self._paths.append(path)
+            if path and path not in existing_paths:
+                self._items.append({"path": path, "click_type": "left"})
                 changed = True
         if changed:
-            self._on_paths_changed(self._paths)
+            self._on_items_changed(self._items)
             self._render_list()
 
     def _remove(self, index):
-        if 0 <= index < len(self._paths):
-            self._paths.pop(index)
-            self._on_paths_changed(self._paths)
+        if 0 <= index < len(self._items):
+            self._items.pop(index)
+            self._on_items_changed(self._items)
             self._render_list()
 
     def _tick(self):
