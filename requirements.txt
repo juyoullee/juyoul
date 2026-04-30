@@ -4,3 +4,4 @@ pywin32
 opencv-python
 numpy
 pyperclip
+pynput

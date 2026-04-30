@@ -1037,6 +1037,146 @@ class ControlCenterApp:
             self.root.after(0, self._restore_gui)
             self.root.after(0, lambda: status_var.set("녹화가 종료되었습니다."))
 
+        def _auto_append_step(step):
+            append_step(step)
+            lbl = state.get("overlay_count_label")
+            if lbl:
+                try:
+                    lbl.config(text=f"● 녹화중: {len(state['steps'])} 스텝")
+                except Exception:
+                    pass
+
+        def _create_record_overlay(screen_w, screen_h):
+            btn_w, btn_h = 165, 62
+            x = screen_w - btn_w - 20
+            y = screen_h - btn_h - 60
+
+            ov = tk.Toplevel()
+            ov.overrideredirect(True)
+            ov.attributes("-topmost", True)
+            ov.attributes("-alpha", 0.92)
+            ov.configure(bg="#1a1a2e")
+            ov.geometry(f"{btn_w}x{btn_h}+{x}+{y}")
+
+            count_label = tk.Label(
+                ov, text="● 녹화중: 0 스텝",
+                bg="#1a1a2e", fg="#e74c3c",
+                font=("Malgun Gothic", 9, "bold"),
+            )
+            count_label.pack(fill="x", padx=6, pady=(6, 2))
+
+            tk.Button(
+                ov, text="■ 녹화 종료",
+                bg="#e74c3c", fg="white",
+                font=("Malgun Gothic", 10, "bold"),
+                relief="flat", cursor="hand2",
+                activebackground="#c0392b", activeforeground="white",
+                command=stop_auto_recording,
+            ).pack(fill="both", expand=True, padx=6, pady=(0, 6))
+
+            state["overlay"] = ov
+            state["overlay_count_label"] = count_label
+
+        def _start_mouse_listener():
+            from pynput import mouse as _pm
+
+            press_state = {"pos": None, "time": None}
+
+            def on_click(x, y, button, pressed):
+                if button != _pm.Button.left:
+                    return
+                if not state.get("recording"):
+                    return False
+
+                if pressed:
+                    press_state["pos"] = (int(x), int(y))
+                    press_state["time"] = time.time()
+                    return
+
+                if press_state["pos"] is None:
+                    return
+
+                end_x, end_y = int(x), int(y)
+                start_x, start_y = press_state["pos"]
+                dx = end_x - start_x
+                dy = end_y - start_y
+                distance = (dx ** 2 + dy ** 2) ** 0.5
+                now = time.time()
+
+                ov = state.get("overlay")
+                if ov:
+                    try:
+                        ov_x = ov.winfo_x()
+                        ov_y = ov.winfo_y()
+                        ov_w = ov.winfo_width()
+                        ov_h = ov.winfo_height()
+                        if ov_x <= end_x <= ov_x + ov_w and ov_y <= end_y <= ov_y + ov_h:
+                            press_state["pos"] = None
+                            return
+                    except Exception:
+                        pass
+
+                if state["last_time"] is not None:
+                    delay = round(now - state["last_time"], 2)
+                    if delay >= 0.05:
+                        dialog.after(0, lambda d=delay: append_step({"type": "sleep", "seconds": d}))
+
+                if distance > 10:
+                    hold_dur = max(0.1, round(now - press_state["time"], 2))
+                    step = {
+                        "type": "drag",
+                        "start_x": start_x, "start_y": start_y,
+                        "delta_x": dx, "delta_y": dy,
+                        "duration": hold_dur, "after": 0.05,
+                    }
+                else:
+                    step = {"type": "click", "x": start_x, "y": start_y, "after": 0.05}
+
+                state["last_time"] = now
+                press_state["pos"] = None
+                dialog.after(0, lambda s=step: _auto_append_step(s))
+
+            listener = _pm.Listener(on_click=on_click)
+            state["mouse_listener"] = listener
+            listener.start()
+
+        def stop_auto_recording():
+            state["recording"] = False
+            listener = state.pop("mouse_listener", None)
+            if listener:
+                try:
+                    listener.stop()
+                except Exception:
+                    pass
+            overlay = state.pop("overlay", None)
+            if overlay:
+                try:
+                    overlay.destroy()
+                except Exception:
+                    pass
+            state.pop("overlay_count_label", None)
+            self._restore_gui()
+            dialog.deiconify()
+            dialog.grab_set()
+            status_var.set(f"자동 녹화 종료. {len(state['steps'])}개 스텝 기록됨.")
+
+        def start_auto_recording():
+            if state["recording"]:
+                return
+            state["recording"] = True
+            state["last_time"] = None
+            state["drag_start"] = None
+
+            screen_w = self.root.winfo_screenwidth()
+            screen_h = self.root.winfo_screenheight()
+
+            dialog.grab_release()
+            dialog.withdraw()
+            self.root.iconify()
+            _create_record_overlay(screen_w, screen_h)
+            _start_mouse_listener()
+            status_var.set("자동 녹화 시작. 화면 우하단 '■ 녹화 종료' 버튼으로 종료하세요.")
+
         def record_worker():
             while state["recording"]:
                 if keyboard.is_pressed("esc"):
@@ -1219,6 +1359,19 @@ class ControlCenterApp:
 
         def close_dialog():
             state["recording"] = False
+            listener = state.pop("mouse_listener", None)
+            if listener:
+                try:
+                    listener.stop()
+                except Exception:
+                    pass
+            overlay = state.pop("overlay", None)
+            if overlay:
+                try:
+                    overlay.destroy()
+                except Exception:
+                    pass
+            self._restore_gui()
             self._macro_builder_active = False
             dialog.grab_release()
             dialog.destroy()
@@ -1226,6 +1379,7 @@ class ControlCenterApp:
         dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
         ttk.Button(toolbar, text="녹화 시작", style="Primary.TButton", command=start_recording).pack(side="left")
+        ttk.Button(toolbar, text="자동 녹화", style="Primary.TButton", command=start_auto_recording).pack(side="left", padx=6)
         ttk.Button(toolbar, text="복제", style="Board.TButton", command=duplicate_selected).pack(side="left", padx=6)
         ttk.Button(toolbar, text="위로", style="Board.TButton", command=lambda: move_selected(-1)).pack(side="left", padx=6)
         ttk.Button(toolbar, text="아래로", style="Board.TButton", command=lambda: move_selected(1)).pack(side="left", padx=6)
