@@ -14,6 +14,12 @@ WINDOW_LAYOUTS = {
     ]
 }
 
+WINDOW_RANGE_1 = [
+    (0, 0), (640, 0), (1280, 0),
+    (0, 320), (640, 320), (1280, 320),
+    (0, 623), (640, 623), (1280, 623),
+]
+
 
 class RecordedActionLibrary(ActionsBase):
 
@@ -54,6 +60,7 @@ class RecordedActionLibrary(ActionsBase):
                         item["steps"],
                         loop_count=int(item.get("loop_count", 1)),
                         loop_infinite=bool(item.get("loop_infinite", False)),
+                        window_9grid=bool(item.get("window_9grid", False)),
                     ),
                     board=item.get("board", "l2m_custom"),
                     pre_focus=item.get("pre_focus") or "Lineage2M",
@@ -98,6 +105,7 @@ class RecordedActionLibrary(ActionsBase):
         countdown=3,
         loop_count=1,
         loop_infinite=False,
+        window_9grid=False,
     ):
         actions = self.load_actions()
         action_id = self._make_action_id(label, actions)
@@ -111,6 +119,7 @@ class RecordedActionLibrary(ActionsBase):
                 "countdown": countdown,
                 "loop_count": max(1, int(loop_count)),
                 "loop_infinite": bool(loop_infinite),
+                "window_9grid": bool(window_9grid),
                 "steps": deepcopy(steps),
             }
         )
@@ -135,6 +144,7 @@ class RecordedActionLibrary(ActionsBase):
         countdown=3,
         loop_count=1,
         loop_infinite=False,
+        window_9grid=False,
     ):
         actions = self.load_actions()
 
@@ -149,6 +159,7 @@ class RecordedActionLibrary(ActionsBase):
             item["countdown"] = countdown
             item["loop_count"] = max(1, int(loop_count))
             item["loop_infinite"] = bool(loop_infinite)
+            item["window_9grid"] = bool(window_9grid)
             self._write_actions(actions)
             return True
 
@@ -166,19 +177,22 @@ class RecordedActionLibrary(ActionsBase):
         with open(self.storage_path, "w", encoding="utf-8") as file:
             json.dump(actions, file, ensure_ascii=False, indent=2)
 
-    def _make_runner(self, steps, loop_count=1, loop_infinite=False):
+    def _make_runner(self, steps, loop_count=1, loop_infinite=False, window_9grid=False):
         frozen_steps = deepcopy(steps)
         total_loops = max(1, int(loop_count))
         repeat_forever = bool(loop_infinite)
+        nine_grid = bool(window_9grid)
 
         def run():
             self.RUNNING = True
             executed = 0
 
             while self.RUNNING:
-                for step in frozen_steps:
-                    if not self._run_step(step):
-                        return False
+                offsets = WINDOW_RANGE_1 if nine_grid else [(0, 0)]
+                for ox, oy in offsets:
+                    for step in frozen_steps:
+                        if not self._run_step(step, ox, oy):
+                            return False
 
                 executed += 1
                 if not repeat_forever and executed >= total_loops:
@@ -187,7 +201,7 @@ class RecordedActionLibrary(ActionsBase):
 
         return run
 
-    def _run_step(self, step):
+    def _run_step(self, step, ox=0, oy=0):
         step_type = step.get("type")
 
         if step_type == "sleep":
@@ -195,15 +209,15 @@ class RecordedActionLibrary(ActionsBase):
 
         if step_type == "click":
             return self.random_click(
-                int(step["x"]),
-                int(step["y"]),
+                int(step["x"]) + ox,
+                int(step["y"]) + oy,
                 float(step.get("after", 0.05)),
             )
 
         if step_type == "drag":
             if not self.random_moveto(
-                int(step["start_x"]),
-                int(step["start_y"]),
+                int(step["start_x"]) + ox,
+                int(step["start_y"]) + oy,
                 float(step.get("before", 0.05)),
             ):
                 return False
@@ -216,8 +230,8 @@ class RecordedActionLibrary(ActionsBase):
 
         if step_type == "repeat_click_pattern":
             count = int(step.get("count", 1))
-            start_x = int(step["start_x"])
-            start_y = int(step["start_y"])
+            start_x = int(step["start_x"]) + ox
+            start_y = int(step["start_y"]) + oy
             delta_x = int(step.get("delta_x", 0))
             delta_y = int(step.get("delta_y", 0))
             delay = float(step.get("after", 0.05))
@@ -231,8 +245,8 @@ class RecordedActionLibrary(ActionsBase):
 
         if step_type == "window_grid_click":
             offsets = self._get_layout_offsets(step)
-            base_x = int(step["base_x"])
-            base_y = int(step["base_y"])
+            base_x = int(step["base_x"]) + ox
+            base_y = int(step["base_y"]) + oy
             delay = float(step.get("after", 0.05))
 
             for offset_x, offset_y in offsets:
@@ -242,8 +256,8 @@ class RecordedActionLibrary(ActionsBase):
 
         if step_type == "window_grid_drag":
             offsets = self._get_layout_offsets(step)
-            base_x = int(step["base_x"])
-            base_y = int(step["base_y"])
+            base_x = int(step["base_x"]) + ox
+            base_y = int(step["base_y"]) + oy
             delta_x = int(step["delta_x"])
             delta_y = int(step["delta_y"])
             before = float(step.get("before", 0.05))

@@ -830,6 +830,7 @@ class ControlCenterApp:
         countdown_var = tk.StringVar(value=str(existing.get("countdown", 3)) if existing else "3")
         loop_mode_var = tk.StringVar(value="무한 반복" if existing and existing.get("loop_infinite") else "횟수 반복")
         loop_count_var = tk.StringVar(value=str(existing.get("loop_count", 1)) if existing else "1")
+        window_9grid_var = tk.BooleanVar(value=bool(existing.get("window_9grid", False)) if existing else False)
         status_var = tk.StringVar(value="좌측 타임라인에서 스텝을 선택해 편집하거나 상단 도구로 새 스텝을 추가하세요.")
 
         root_card = tk.Frame(dialog, bg="#ffffff", highlightbackground="#d5deea", highlightthickness=1)
@@ -863,6 +864,17 @@ class ControlCenterApp:
 
         loop_mode_var.trace_add("write", _on_loop_mode)
         _on_loop_mode()
+
+        _9grid_frame = tk.Frame(meta, bg="#ffffff")
+        _9grid_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        tk.Checkbutton(
+            _9grid_frame,
+            text="9창 반복 — 1번 창 기준 좌표로 9개 창 전체 순서대로 실행",
+            variable=window_9grid_var,
+            bg="#ffffff", fg="#142033",
+            font=("Malgun Gothic", 10),
+            activebackground="#ffffff",
+        ).pack(anchor="w")
 
         toolbar = tk.Frame(root_card, bg="#ffffff")
         toolbar.pack(fill="x", padx=16, pady=(0, 10))
@@ -1341,6 +1353,7 @@ class ControlCenterApp:
                     countdown=countdown,
                     loop_count=loop_count,
                     loop_infinite=loop_infinite,
+                    window_9grid=window_9grid_var.get(),
                 )
             else:
                 provider.save_action(
@@ -1351,6 +1364,7 @@ class ControlCenterApp:
                     countdown=countdown,
                     loop_count=loop_count,
                     loop_infinite=loop_infinite,
+                    window_9grid=window_9grid_var.get(),
                 )
 
             self._refresh_actions()
