@@ -32,11 +32,11 @@ class L2mDayilyAction(ActionsBase):
         return [
             ActionSpec(id="l2m.focus", label="창불러오기", runner=self.창불러오기, board="l2m", countdown=1),
             ActionSpec(id="l2m.minimize", label="창최소화", runner=self.창최소화, board="l2m", countdown=1),
-            ActionSpec(id="l2m.power_save", label="절전모드", runner=self.절전모드, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.power_save", label="절전모드", runner=self.절전모드, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.bag_open", label="가방열기", runner=self.가방열기, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.event_dungeon", label="UL이벤트던전", runner=self.UL이벤트던전, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.mail", label="우편받기", runner=self.우편받기, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.return_hunt", label="사냥터귀환", runner=self.사냥터귀환, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.return_hunt", label="사냥터귀환", runner=self.사냥터귀환, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.auction", label="경매장", runner=self.경매장, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.full_routine", label="전체루틴", runner=self.전체루틴, board="l2m", pre_focus="리니지2M", post_minimize="리니지2M"),
             ActionSpec(id="l2m.event_craft", label="이벤트제작", runner=self.이벤트제작, board="l2m", pre_focus="리니지2M"),
@@ -46,14 +46,12 @@ class L2mDayilyAction(ActionsBase):
             ActionSpec(id="l2m.daily", label="UL데일리", runner=self.UL데일리, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.potion", label="UL물약구매", runner=self.UL물약구매, board="l2m", pre_focus="리니지2M"),
             ActionSpec(id="l2m.cash_shop", label="UL캐시상점", runner=self.UL캐시상점, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.raccoon_shop", label="너구리상점", runner=self.너구리상점, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.yeopo_dungeon", label="여포던전", runner=self.여포던전, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.yeopo_click", label="여포클릭", runner=self.여포클릭, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.yeopo_shop", label="고참상점", runner=self.고참상점, board="l2m", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.power_save_off", label="절전해제", runner=self.절전해제, board="l2m", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.power_save_off", label="절전해제", runner=self.절전해제, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.return_town", label="전체마을귀환", runner=self.전체마을귀환, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.party_disband", label="파티해체", runner=self.파티해체, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.party_disband", label="스케줄러실행", runner=self.스케줄러실행, board="l2m_dungeon", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.event_shop", label="달고나상점구매", runner=self.달고나상점구매, board="l2m", pre_focus="리니지2M"),
+       
         ]
 
     def _focus_and_reset(self, rx, ry):
@@ -89,8 +87,6 @@ class L2mDayilyAction(ActionsBase):
     시즌패스 = lambda self: self._run_windows(L2mCoordinates.시즌패스)
     너구리상점 = lambda self: self._run_windows(L2mCoordinates.event_shop)
     UL이벤트던전 = lambda self: self._run_windows(L2mCoordinates.EventDungeon)
-    여포던전 = lambda self: self._run_windows(L2mCoordinates.이벤트던전_여포)
-    고참상점 = lambda self: self._run_windows(L2mCoordinates.고참상점)
     절전해제 = lambda self: self._run_windows(L2mCoordinates.절전해제)
     전체마을귀환 = lambda self: self._run_windows(L2mCoordinates.전체마을귀환)
     파티해체 = lambda self: self._run_windows(L2mCoordinates.파티해체)
@@ -109,6 +105,15 @@ class L2mDayilyAction(ActionsBase):
                 if not self.run_actions(part, rx, ry):
                     return False
         return True
+
+    def 달고나상점구매(self):
+        for part in L2mCoordinates.달고나이벤트.values():
+            for rx, ry in window_range_1:
+                self._focus_and_reset(rx, ry)
+                if not self.run_actions(part, rx, ry):
+                    return False
+        return True
+
 
     def 여포클릭(self):
         while True:
