@@ -10,9 +10,6 @@ from copy import deepcopy
 from datetime import datetime
 from tkinter import messagebox, ttk
 
-import keyboard
-import pyautogui
-
 from Core.action_specs import ActionSpec, BoardSpec
 from Core.custom_actions import RecordedActionLibrary
 from Core.window_control import bring_to_front, count_windows, minimize_window
@@ -822,6 +819,7 @@ class ControlCenterApp:
             "last_time": None,
             "drag_start": None,
             "selected_index": None,
+            "step_rows": [],
         }
 
         name_var = tk.StringVar(value=existing["label"] if existing else "")
@@ -831,7 +829,7 @@ class ControlCenterApp:
         loop_mode_var = tk.StringVar(value="무한 반복" if existing and existing.get("loop_infinite") else "횟수 반복")
         loop_count_var = tk.StringVar(value=str(existing.get("loop_count", 1)) if existing else "1")
         window_9grid_var = tk.BooleanVar(value=bool(existing.get("window_9grid", False)) if existing else False)
-        status_var = tk.StringVar(value="좌측 타임라인에서 스텝을 선택해 편집하거나 상단 도구로 새 스텝을 추가하세요.")
+        status_var = tk.StringVar(value="좌측 타임라인에서 스텝을 선택해 편집하거나 우측 탭에서 새 스텝을 추가하세요.")
 
         root_card = tk.Frame(dialog, bg="#ffffff", highlightbackground="#d5deea", highlightthickness=1)
         root_card.pack(fill="both", expand=True, padx=16, pady=16)
@@ -839,7 +837,7 @@ class ControlCenterApp:
         header = tk.Frame(root_card, bg="#0f172a")
         header.pack(fill="x")
         tk.Label(header, text="Macro Builder", bg="#0f172a", fg="#f8fafc", font=("Malgun Gothic", 18, "bold")).pack(anchor="w", padx=18, pady=(16, 2))
-        tk.Label(header, text="녹화, 타임라인 편집, 스텝 속성 편집을 한 화면에서 처리합니다.", bg="#0f172a", fg="#9fb0c8", font=("Malgun Gothic", 10)).pack(anchor="w", padx=18, pady=(0, 16))
+        tk.Label(header, text="타임라인 편집, 스텝 속성 편집을 한 화면에서 처리합니다.", bg="#0f172a", fg="#9fb0c8", font=("Malgun Gothic", 10)).pack(anchor="w", padx=18, pady=(0, 16))
 
         meta = tk.Frame(root_card, bg="#ffffff")
         meta.pack(fill="x", padx=16, pady=(16, 10))
@@ -889,12 +887,21 @@ class ControlCenterApp:
 
         tk.Label(left, text="Step Timeline", bg="#f8fafc", fg="#142033", font=("Malgun Gothic", 12, "bold")).pack(anchor="w", padx=14, pady=(12, 6))
 
-        tree = ttk.Treeview(left, columns=("type", "summary"), show="headings", height=18)
-        tree.heading("type", text="Type")
-        tree.heading("summary", text="Summary")
-        tree.column("type", width=140, anchor="center")
-        tree.column("summary", width=360, anchor="w")
-        tree.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        timeline_wrapper = tk.Frame(left, bg="#f8fafc")
+        timeline_wrapper.pack(fill="both", expand=True, padx=12, pady=(0, 4))
+
+        timeline_canvas = tk.Canvas(timeline_wrapper, bg="#f8fafc", highlightthickness=0)
+        timeline_vsb = ttk.Scrollbar(timeline_wrapper, orient="vertical", command=timeline_canvas.yview)
+        timeline_canvas.configure(yscrollcommand=timeline_vsb.set)
+        timeline_vsb.pack(side="right", fill="y")
+        timeline_canvas.pack(side="left", fill="both", expand=True)
+
+        step_list_frame = tk.Frame(timeline_canvas, bg="#f8fafc")
+        _step_win = timeline_canvas.create_window((0, 0), window=step_list_frame, anchor="nw")
+
+        step_list_frame.bind("<Configure>", lambda _: timeline_canvas.configure(scrollregion=timeline_canvas.bbox("all")))
+        timeline_canvas.bind("<Configure>", lambda e: timeline_canvas.itemconfigure(_step_win, width=e.width))
+        timeline_canvas.bind("<MouseWheel>", lambda e: timeline_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         status_bar = tk.Label(left, textvariable=status_var, bg="#f8fafc", fg="#2563eb", anchor="w", justify="left")
         status_bar.pack(fill="x", padx=12, pady=(0, 12))
@@ -907,12 +914,8 @@ class ControlCenterApp:
         notebook.add(add_tab, text="Add Steps")
         notebook.add(edit_tab, text="Step Inspector")
 
-        quick_card = tk.LabelFrame(add_tab, text="Quick Capture", bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold"))
-        quick_card.pack(fill="x", padx=12, pady=(12, 10))
-        tk.Label(quick_card, text="F8 클릭, F9 드래그 시작, F10 드래그 종료, ESC 녹화 종료", bg="#ffffff", fg="#516072", anchor="w").pack(fill="x", padx=12, pady=(10, 6))
-
         form_tabs = ttk.Notebook(add_tab)
-        form_tabs.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        form_tabs.pack(fill="both", expand=True, padx=12, pady=(12, 12))
 
         click_tab = tk.Frame(form_tabs, bg="#ffffff")
         drag_tab = tk.Frame(form_tabs, bg="#ffffff")
@@ -925,13 +928,13 @@ class ControlCenterApp:
         form_tabs.add(grid_tab, text="9-Window")
         form_tabs.add(wait_tab, text="Wait")
 
-        click_vars = {"x": tk.StringVar(), "y": tk.StringVar(), "after": tk.StringVar(value="0.05")}
+        click_vars = {"x": tk.StringVar(), "y": tk.StringVar(), "delay": tk.StringVar(value="0"), "after": tk.StringVar(value="0.05")}
         drag_vars = {"start_x": tk.StringVar(), "start_y": tk.StringVar(), "delta_x": tk.StringVar(), "delta_y": tk.StringVar(), "duration": tk.StringVar(value="0.25"), "after": tk.StringVar(value="0.05")}
         repeat_vars = {"start_x": tk.StringVar(), "start_y": tk.StringVar(), "delta_x": tk.StringVar(), "delta_y": tk.StringVar(), "count": tk.StringVar(value="3"), "after": tk.StringVar(value="0.08")}
         grid_vars = {"mode": tk.StringVar(value="클릭"), "base_x": tk.StringVar(), "base_y": tk.StringVar(), "delta_x": tk.StringVar(value="0"), "delta_y": tk.StringVar(value="0"), "duration": tk.StringVar(value="0.25"), "after": tk.StringVar(value="0.08")}
         wait_vars = {"seconds": tk.StringVar(value="0.50")}
 
-        self._build_numeric_form(click_tab, [("X", "x"), ("Y", "y"), ("후 대기", "after")], click_vars)
+        self._build_numeric_form(click_tab, [("X", "x"), ("Y", "y"), ("딜레이", "delay"), ("후 대기", "after")], click_vars)
         self._build_numeric_form(drag_tab, [("시작 X", "start_x"), ("시작 Y", "start_y"), ("Delta X", "delta_x"), ("Delta Y", "delta_y"), ("지속시간", "duration"), ("후 대기", "after")], drag_vars)
         self._build_numeric_form(repeat_tab, [("시작 X", "start_x"), ("시작 Y", "start_y"), ("X 증가", "delta_x"), ("Y 증가", "delta_y"), ("횟수", "count"), ("후 대기", "after")], repeat_vars)
         self._build_labeled_combo(grid_tab, "동작", grid_vars["mode"], ["클릭", "드래그"], 0, 0)
@@ -942,7 +945,7 @@ class ControlCenterApp:
 
         inspector_frame = tk.Frame(edit_tab, bg="#ffffff")
         inspector_frame.pack(fill="x", padx=12, pady=(12, 8))
-        inspector_vars = {key: tk.StringVar() for key in ("type", "x", "y", "start_x", "start_y", "delta_x", "delta_y", "count", "seconds", "duration", "after")}
+        inspector_vars = {key: tk.StringVar() for key in ("type", "x", "y", "start_x", "start_y", "delta_x", "delta_y", "count", "seconds", "duration", "after", "delay")}
         self._build_labeled_entry(inspector_frame, "Type", inspector_vars["type"], 0, 0)
         self._build_labeled_entry(inspector_frame, "X", inspector_vars["x"], 0, 1)
         self._build_labeled_entry(inspector_frame, "Y", inspector_vars["y"], 0, 2)
@@ -954,6 +957,102 @@ class ControlCenterApp:
         self._build_labeled_entry(inspector_frame, "Seconds", inspector_vars["seconds"], 2, 2)
         self._build_labeled_entry(inspector_frame, "Duration", inspector_vars["duration"], 3, 0)
         self._build_labeled_entry(inspector_frame, "After", inspector_vars["after"], 3, 1)
+        self._build_labeled_entry(inspector_frame, "Delay", inspector_vars["delay"], 3, 2)
+
+        _TYPE_COLORS = {
+            "click": ("#dbeafe", "#1e3a8a"),
+            "sleep": ("#fef9c3", "#78350f"),
+            "drag": ("#dcfce7", "#14532d"),
+            "repeat_click_pattern": ("#ede9fe", "#3730a3"),
+            "window_grid_click": ("#fce7f3", "#831843"),
+            "window_grid_drag": ("#ffedd5", "#7c2d12"),
+        }
+        _ROW_BG = "#f8fafc"
+        _ROW_SEL = "#dbeafe"
+
+        def _step_inline_summary(step):
+            t = step["type"]
+            if t == "click":
+                d = step.get("delay", 0.0)
+                d_str = f"  d={d:.2f}" if d > 0 else ""
+                return f"({step['x']}, {step['y']}){d_str}  →{step.get('after', 0.05):.2f}"
+            if t == "sleep":
+                return f"{step['seconds']:.2f}s"
+            if t == "drag":
+                return f"({step['start_x']},{step['start_y']}) +({step['delta_x']},{step['delta_y']}) {step.get('duration', 0.25):.2f}s"
+            if t == "repeat_click_pattern":
+                return f"({step['start_x']},{step['start_y']}) x{step['count']}"
+            if t == "window_grid_click":
+                return f"({step.get('base_x', 0)}, {step.get('base_y', 0)})"
+            if t == "window_grid_drag":
+                return f"({step.get('base_x', 0)},{step.get('base_y', 0)}) +({step.get('delta_x', 0)},{step.get('delta_y', 0)})"
+            return ""
+
+        def _set_row_highlight(row_frame, selected):
+            bg = _ROW_SEL if selected else _ROW_BG
+            try:
+                row_frame.configure(bg=bg)
+                for child in row_frame.winfo_children():
+                    if not isinstance(child, ttk.Entry):
+                        try:
+                            child.configure(bg=bg)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        def _make_step_row(idx, step):
+            bg = _ROW_SEL if idx == state["selected_index"] else _ROW_BG
+            row = tk.Frame(step_list_frame, bg=bg, pady=2)
+            row.pack(fill="x")
+
+            type_bg, type_fg = _TYPE_COLORS.get(step["type"], ("#f1f5f9", "#475569"))
+
+            idx_lbl = tk.Label(row, text=f"{idx + 1:02d}", bg=bg, fg="#94a3b8", font=("Consolas", 9), width=3, anchor="e")
+            idx_lbl.pack(side="left", padx=(4, 2))
+
+            type_lbl = tk.Label(row, text=step["type"].replace("_", " ").upper()[:12], bg=type_bg, fg=type_fg, font=("Consolas", 8, "bold"), padx=4, pady=1)
+            type_lbl.pack(side="left", padx=(0, 5))
+
+            if step["type"] == "click":
+                note_var = tk.StringVar(value=step.get("note", ""))
+
+                def _on_note(*_, i=idx, v=note_var):
+                    if 0 <= i < len(state["steps"]):
+                        state["steps"][i]["note"] = v.get()
+
+                note_var.trace_add("write", _on_note)
+                note_entry = ttk.Entry(row, textvariable=note_var, width=14, font=("Malgun Gothic", 9))
+                note_entry.pack(side="right", padx=(2, 6))
+
+            sum_lbl = tk.Label(row, text=_step_inline_summary(step), bg=bg, fg="#1e293b", font=("Consolas", 9), anchor="w")
+            sum_lbl.pack(side="left", fill="x", expand=True)
+
+            def _on_row_click(_, i=idx):
+                select_step(i)
+
+            for w in (row, idx_lbl, type_lbl, sum_lbl):
+                w.bind("<Button-1>", _on_row_click)
+
+            return row
+
+        def select_step(idx):
+            prev = state["selected_index"]
+            state["selected_index"] = idx
+            rows = state["step_rows"]
+            if prev is not None and 0 <= prev < len(rows):
+                _set_row_highlight(rows[prev], False)
+            if 0 <= idx < len(rows):
+                _set_row_highlight(rows[idx], True)
+                try:
+                    rows[idx].update_idletasks()
+                    row_y = rows[idx].winfo_y()
+                    frame_h = step_list_frame.winfo_height()
+                    if frame_h > 0:
+                        timeline_canvas.yview_moveto(max(0.0, (row_y - 20) / frame_h))
+                except Exception:
+                    pass
+            load_selected_into_editor()
 
         def selected_step():
             idx = state["selected_index"]
@@ -961,11 +1060,7 @@ class ControlCenterApp:
                 return None
             return state["steps"][idx]
 
-        def load_selected_into_editor(event=None):
-            selection = tree.selection()
-            if selection:
-                state["selected_index"] = int(selection[0])
-
+        def load_selected_into_editor():
             step = selected_step()
             for var in inspector_vars.values():
                 var.set("")
@@ -976,6 +1071,7 @@ class ControlCenterApp:
             if step.get("type") == "click":
                 inspector_vars["x"].set(str(step.get("x", "")))
                 inspector_vars["y"].set(str(step.get("y", "")))
+                inspector_vars["delay"].set(str(step.get("delay", 0.0)))
             if step.get("type") in ("drag", "repeat_click_pattern"):
                 for key in ("start_x", "start_y", "delta_x", "delta_y"):
                     inspector_vars[key].set(str(step.get(key, "")))
@@ -994,63 +1090,37 @@ class ControlCenterApp:
                 inspector_vars["delta_y"].set(str(step.get("delta_y", "")))
 
         def refresh_tree(select_index=None):
-            tree.delete(*tree.get_children())
-            for index, step in enumerate(state["steps"]):
-                tree.insert("", "end", iid=str(index), values=(step["type"], self._step_summary(step)))
+            for w in step_list_frame.winfo_children():
+                w.destroy()
+            state["step_rows"] = []
+
+            for i, step in enumerate(state["steps"]):
+                row = _make_step_row(i, step)
+                state["step_rows"].append(row)
+
+            step_list_frame.update_idletasks()
+            timeline_canvas.configure(scrollregion=timeline_canvas.bbox("all"))
+
             if select_index is not None and 0 <= select_index < len(state["steps"]):
-                tree.selection_set(str(select_index))
-                tree.focus(str(select_index))
-                tree.see(str(select_index))
                 state["selected_index"] = select_index
+                select_step(select_index)
             else:
                 state["selected_index"] = None
-            load_selected_into_editor()
+                load_selected_into_editor()
 
-        def append_step(step):
-            state["steps"].append(step)
-            refresh_tree(len(state["steps"]) - 1)
-
-        def add_wait_from_last(now):
-            if state["last_time"] is None:
-                return
-            delay = round(now - state["last_time"], 2)
-            if delay > 0:
-                state["steps"].append({"type": "sleep", "seconds": delay})
-
-        def record_click():
-            now = time.time()
-            add_wait_from_last(now)
-            x, y = pyautogui.position()
-            append_step({"type": "click", "x": int(x), "y": int(y), "after": 0.05})
-            state["last_time"] = now
-            status_var.set(f"클릭 기록: ({x}, {y})")
-
-        def record_drag_start():
-            x, y = pyautogui.position()
-            state["drag_start"] = (int(x), int(y))
-            state["last_time"] = time.time()
-            status_var.set(f"드래그 시작점: ({x}, {y})")
-
-        def record_drag_end():
-            if state["drag_start"] is None:
-                status_var.set("먼저 F9로 드래그 시작점을 기록하세요.")
-                return
-            now = time.time()
-            add_wait_from_last(now)
-            end_x, end_y = pyautogui.position()
-            start_x, start_y = state["drag_start"]
-            append_step({"type": "drag", "start_x": start_x, "start_y": start_y, "delta_x": int(end_x - start_x), "delta_y": int(end_y - start_y), "duration": 0.25, "after": 0.05})
-            state["drag_start"] = None
-            state["last_time"] = now
-            status_var.set(f"드래그 기록: ({start_x}, {start_y}) -> ({int(end_x)}, {int(end_y)})")
-
-        def stop_recording():
-            state["recording"] = False
-            self.root.after(0, self._restore_gui)
-            self.root.after(0, lambda: status_var.set("녹화가 종료되었습니다."))
+        def insert_step(step):
+            idx = state["selected_index"]
+            if idx is not None and 0 <= idx < len(state["steps"]):
+                insert_at = idx + 1
+                state["steps"].insert(insert_at, step)
+                refresh_tree(insert_at)
+            else:
+                state["steps"].append(step)
+                refresh_tree(len(state["steps"]) - 1)
 
         def _auto_append_step(step):
-            append_step(step)
+            state["steps"].append(step)
+            refresh_tree(len(state["steps"]) - 1)
             lbl = state.get("overlay_count_label")
             if lbl:
                 try:
@@ -1059,32 +1129,57 @@ class ControlCenterApp:
                     pass
 
         def _create_record_overlay(screen_w, screen_h):
-            btn_w, btn_h = 165, 62
-            x = screen_w - btn_w - 20
-            y = screen_h - btn_h - 60
+            ov_w, ov_h = 225, 180
+            x = screen_w - ov_w - 20
+            y = screen_h - ov_h - 60
 
             ov = tk.Toplevel()
             ov.overrideredirect(True)
             ov.attributes("-topmost", True)
             ov.attributes("-alpha", 0.92)
             ov.configure(bg="#1a1a2e")
-            ov.geometry(f"{btn_w}x{btn_h}+{x}+{y}")
+            ov.geometry(f"{ov_w}x{ov_h}+{x}+{y}")
 
-            count_label = tk.Label(
-                ov, text="● 녹화중: 0 스텝",
-                bg="#1a1a2e", fg="#e74c3c",
-                font=("Malgun Gothic", 9, "bold"),
-            )
-            count_label.pack(fill="x", padx=6, pady=(6, 2))
+            count_label = tk.Label(ov, text="● 녹화중: 0 스텝", bg="#1a1a2e", fg="#e74c3c", font=("Malgun Gothic", 9, "bold"))
+            count_label.pack(fill="x", padx=6, pady=(6, 3))
 
-            tk.Button(
-                ov, text="■ 녹화 종료",
-                bg="#e74c3c", fg="white",
-                font=("Malgun Gothic", 10, "bold"),
-                relief="flat", cursor="hand2",
-                activebackground="#c0392b", activeforeground="white",
-                command=stop_auto_recording,
-            ).pack(fill="both", expand=True, padx=6, pady=(0, 6))
+            tk.Frame(ov, bg="#2a2a4a", height=1).pack(fill="x", padx=6)
+
+            insert_frame = tk.Frame(ov, bg="#252540")
+            insert_frame.pack(fill="x", padx=4, pady=(4, 2))
+
+            tk.Label(insert_frame, text="수동 삽입", bg="#252540", fg="#9ca3af", font=("Malgun Gothic", 8, "bold")).pack(anchor="w", padx=4, pady=(2, 1))
+
+            xy_row = tk.Frame(insert_frame, bg="#252540")
+            xy_row.pack(fill="x", padx=4)
+            tk.Label(xy_row, text="X", bg="#252540", fg="#d1d5db", font=("Consolas", 8), width=2).pack(side="left")
+            ov_x_var = tk.StringVar()
+            tk.Entry(xy_row, textvariable=ov_x_var, width=5, font=("Consolas", 8), bg="#1e1e3a", fg="#f0f0f0", insertbackground="#f0f0f0", relief="flat").pack(side="left", padx=2)
+            tk.Label(xy_row, text="Y", bg="#252540", fg="#d1d5db", font=("Consolas", 8), width=2).pack(side="left")
+            ov_y_var = tk.StringVar()
+            tk.Entry(xy_row, textvariable=ov_y_var, width=5, font=("Consolas", 8), bg="#1e1e3a", fg="#f0f0f0", insertbackground="#f0f0f0", relief="flat").pack(side="left", padx=2)
+
+            dl_row = tk.Frame(insert_frame, bg="#252540")
+            dl_row.pack(fill="x", padx=4, pady=(3, 2))
+            tk.Label(dl_row, text="딜레이", bg="#252540", fg="#d1d5db", font=("Consolas", 8)).pack(side="left")
+            ov_delay_var = tk.StringVar(value="0.5")
+            tk.Entry(dl_row, textvariable=ov_delay_var, width=5, font=("Consolas", 8), bg="#1e1e3a", fg="#f0f0f0", insertbackground="#f0f0f0", relief="flat").pack(side="left", padx=4)
+
+            def _insert_manual():
+                try:
+                    x_val = int(ov_x_var.get())
+                    y_val = int(ov_y_var.get())
+                    delay_val = float(ov_delay_var.get())
+                except ValueError:
+                    return
+                step = {"type": "click", "x": x_val, "y": y_val, "delay": delay_val, "after": 0.05, "note": ""}
+                dialog.after(0, lambda s=step: _auto_append_step(s))
+
+            tk.Button(insert_frame, text="삽입", bg="#3b82f6", fg="white", font=("Malgun Gothic", 8, "bold"), relief="flat", cursor="hand2", activebackground="#2563eb", command=_insert_manual, padx=8).pack(anchor="e", padx=4, pady=(0, 2))
+
+            tk.Frame(ov, bg="#2a2a4a", height=1).pack(fill="x", padx=6)
+
+            tk.Button(ov, text="■ 녹화 종료", bg="#e74c3c", fg="white", font=("Malgun Gothic", 10, "bold"), relief="flat", cursor="hand2", activebackground="#c0392b", activeforeground="white", command=stop_auto_recording).pack(fill="x", padx=6, pady=(4, 6))
 
             state["overlay"] = ov
             state["overlay_count_label"] = count_label
@@ -1128,21 +1223,18 @@ class ControlCenterApp:
                     except Exception:
                         pass
 
-                if state["last_time"] is not None:
-                    delay = round(now - state["last_time"], 2)
-                    if delay >= 0.05:
-                        dialog.after(0, lambda d=delay: append_step({"type": "sleep", "seconds": d}))
-
                 if distance > 10:
+                    if state["last_time"] is not None:
+                        drag_delay = round(now - state["last_time"], 2)
+                        if drag_delay >= 0.05:
+                            dialog.after(0, lambda d=drag_delay: _auto_append_step({"type": "sleep", "seconds": d}))
                     hold_dur = max(0.1, round(now - press_state["time"], 2))
-                    step = {
-                        "type": "drag",
-                        "start_x": start_x, "start_y": start_y,
-                        "delta_x": dx, "delta_y": dy,
-                        "duration": hold_dur, "after": 0.05,
-                    }
+                    step = {"type": "drag", "start_x": start_x, "start_y": start_y, "delta_x": dx, "delta_y": dy, "duration": hold_dur, "after": 0.05}
                 else:
-                    step = {"type": "click", "x": start_x, "y": start_y, "after": 0.05}
+                    click_delay = 0.0
+                    if state["last_time"] is not None:
+                        click_delay = max(0.0, round(now - state["last_time"], 2))
+                    step = {"type": "click", "x": start_x, "y": start_y, "delay": click_delay, "after": 0.05, "note": ""}
 
                 state["last_time"] = now
                 press_state["pos"] = None
@@ -1189,43 +1281,93 @@ class ControlCenterApp:
             _start_mouse_listener()
             status_var.set("자동 녹화 시작. 화면 우하단 '■ 녹화 종료' 버튼으로 종료하세요.")
 
-        def record_worker():
-            while state["recording"]:
-                if keyboard.is_pressed("esc"):
-                    stop_recording()
-                    return
-                if keyboard.is_pressed("f8"):
-                    self.root.after(0, record_click)
-                    time.sleep(0.35)
-                    continue
-                if keyboard.is_pressed("f9"):
-                    self.root.after(0, record_drag_start)
-                    time.sleep(0.35)
-                    continue
-                if keyboard.is_pressed("f10"):
-                    self.root.after(0, record_drag_end)
-                    time.sleep(0.35)
-                    continue
-                time.sleep(0.03)
-
-        def start_recording():
-            if state["recording"]:
+        def start_mouse_pick():
+            if state.get("recording"):
                 return
-            state["last_time"] = None
-            state["drag_start"] = None
-            status_var.set("3초 뒤 녹화를 시작합니다. F8/F9/F10/ESC를 사용하세요.")
 
-            def begin():
-                state["recording"] = True
-                self.root.iconify()
-                threading.Thread(target=record_worker, daemon=True).start()
+            pick_state = {}
 
-            dialog.after(3000, begin)
+            def _show_pick_overlay():
+                screen_w = dialog.winfo_screenwidth()
+                screen_h = dialog.winfo_screenheight()
+                ov_w, ov_h = 230, 62
+                ox = (screen_w - ov_w) // 2
+                oy = screen_h - ov_h - 80
+
+                ov = tk.Toplevel()
+                ov.overrideredirect(True)
+                ov.attributes("-topmost", True)
+                ov.attributes("-alpha", 0.92)
+                ov.configure(bg="#0f172a")
+                ov.geometry(f"{ov_w}x{ov_h}+{ox}+{oy}")
+
+                tk.Label(ov, text="클릭할 위치를 클릭하세요", bg="#0f172a", fg="#60a5fa", font=("Malgun Gothic", 9, "bold")).pack(pady=(8, 2))
+                tk.Button(ov, text="취소", bg="#374151", fg="white", font=("Malgun Gothic", 8), relief="flat", cursor="hand2", command=lambda: dialog.after(0, lambda: _stop_pick(True))).pack(pady=(0, 8))
+
+                pick_state["overlay"] = ov
+
+            def _stop_pick(cancelled=False):
+                listener = pick_state.pop("listener", None)
+                if listener:
+                    try:
+                        listener.stop()
+                    except Exception:
+                        pass
+                ov = pick_state.pop("overlay", None)
+                if ov:
+                    try:
+                        ov.destroy()
+                    except Exception:
+                        pass
+                self._restore_gui()
+                dialog.deiconify()
+                dialog.grab_set()
+                if cancelled:
+                    status_var.set("마우스 추가 취소.")
+
+            def _on_pick(x, y, button, pressed):
+                from pynput import mouse as _pm
+                if button != _pm.Button.left or not pressed:
+                    return
+                ov = pick_state.get("overlay")
+                if ov:
+                    try:
+                        if ov.winfo_x() <= int(x) <= ov.winfo_x() + ov.winfo_width() and \
+                                ov.winfo_y() <= int(y) <= ov.winfo_y() + ov.winfo_height():
+                            return
+                    except Exception:
+                        pass
+                try:
+                    delay_val = float(click_vars["delay"].get() or 0)
+                    after_val = float(click_vars["after"].get() or 0.05)
+                except ValueError:
+                    delay_val, after_val = 0.0, 0.05
+                step = {"type": "click", "x": int(x), "y": int(y), "delay": delay_val, "after": after_val, "note": ""}
+                dialog.after(0, lambda s=step: (_stop_pick(), insert_step(s), status_var.set(f"마우스 클릭 추가: ({s['x']}, {s['y']})")))
+                return False
+
+            dialog.grab_release()
+            dialog.withdraw()
+            self.root.iconify()
+            _show_pick_overlay()
+
+            from pynput import mouse as _pm
+            listener = _pm.Listener(on_click=_on_pick)
+            pick_state["listener"] = listener
+            listener.start()
 
         def build_step_from_editor():
             step_type = inspector_vars["type"].get().strip()
             if step_type == "click":
-                return {"type": "click", "x": int(inspector_vars["x"].get()), "y": int(inspector_vars["y"].get()), "after": float(inspector_vars["after"].get() or 0.05)}
+                cur = selected_step()
+                return {
+                    "type": "click",
+                    "x": int(inspector_vars["x"].get()),
+                    "y": int(inspector_vars["y"].get()),
+                    "delay": float(inspector_vars["delay"].get() or 0.0),
+                    "after": float(inspector_vars["after"].get() or 0.05),
+                    "note": cur.get("note", "") if cur else "",
+                }
             if step_type == "sleep":
                 return {"type": "sleep", "seconds": float(inspector_vars["seconds"].get())}
             if step_type == "drag":
@@ -1252,7 +1394,15 @@ class ControlCenterApp:
 
         def add_click_manual():
             try:
-                append_step({"type": "click", "x": int(click_vars["x"].get()), "y": int(click_vars["y"].get()), "after": float(click_vars["after"].get())})
+                step = {
+                    "type": "click",
+                    "x": int(click_vars["x"].get()),
+                    "y": int(click_vars["y"].get()),
+                    "delay": float(click_vars["delay"].get() or 0),
+                    "after": float(click_vars["after"].get()),
+                    "note": "",
+                }
+                insert_step(step)
             except ValueError:
                 messagebox.showwarning("확인", "클릭 입력값을 다시 확인하세요.", parent=dialog)
                 return
@@ -1260,7 +1410,7 @@ class ControlCenterApp:
 
         def add_drag_manual():
             try:
-                append_step({"type": "drag", "start_x": int(drag_vars["start_x"].get()), "start_y": int(drag_vars["start_y"].get()), "delta_x": int(drag_vars["delta_x"].get()), "delta_y": int(drag_vars["delta_y"].get()), "duration": float(drag_vars["duration"].get()), "after": float(drag_vars["after"].get())})
+                insert_step({"type": "drag", "start_x": int(drag_vars["start_x"].get()), "start_y": int(drag_vars["start_y"].get()), "delta_x": int(drag_vars["delta_x"].get()), "delta_y": int(drag_vars["delta_y"].get()), "duration": float(drag_vars["duration"].get()), "after": float(drag_vars["after"].get())})
             except ValueError:
                 messagebox.showwarning("확인", "드래그 입력값을 다시 확인하세요.", parent=dialog)
                 return
@@ -1268,7 +1418,7 @@ class ControlCenterApp:
 
         def add_repeat_manual():
             try:
-                append_step({"type": "repeat_click_pattern", "start_x": int(repeat_vars["start_x"].get()), "start_y": int(repeat_vars["start_y"].get()), "delta_x": int(repeat_vars["delta_x"].get()), "delta_y": int(repeat_vars["delta_y"].get()), "count": int(repeat_vars["count"].get()), "after": float(repeat_vars["after"].get())})
+                insert_step({"type": "repeat_click_pattern", "start_x": int(repeat_vars["start_x"].get()), "start_y": int(repeat_vars["start_y"].get()), "delta_x": int(repeat_vars["delta_x"].get()), "delta_y": int(repeat_vars["delta_y"].get()), "count": int(repeat_vars["count"].get()), "after": float(repeat_vars["after"].get())})
             except ValueError:
                 messagebox.showwarning("확인", "반복 패턴 입력값을 다시 확인하세요.", parent=dialog)
                 return
@@ -1277,9 +1427,9 @@ class ControlCenterApp:
         def add_grid_manual():
             try:
                 if grid_vars["mode"].get() == "클릭":
-                    append_step({"type": "window_grid_click", "layout": "l2m_9_grid", "base_x": int(grid_vars["base_x"].get()), "base_y": int(grid_vars["base_y"].get()), "after": float(grid_vars["after"].get())})
+                    insert_step({"type": "window_grid_click", "layout": "l2m_9_grid", "base_x": int(grid_vars["base_x"].get()), "base_y": int(grid_vars["base_y"].get()), "after": float(grid_vars["after"].get())})
                 else:
-                    append_step({"type": "window_grid_drag", "layout": "l2m_9_grid", "base_x": int(grid_vars["base_x"].get()), "base_y": int(grid_vars["base_y"].get()), "delta_x": int(grid_vars["delta_x"].get()), "delta_y": int(grid_vars["delta_y"].get()), "duration": float(grid_vars["duration"].get()), "after": float(grid_vars["after"].get())})
+                    insert_step({"type": "window_grid_drag", "layout": "l2m_9_grid", "base_x": int(grid_vars["base_x"].get()), "base_y": int(grid_vars["base_y"].get()), "delta_x": int(grid_vars["delta_x"].get()), "delta_y": int(grid_vars["delta_y"].get()), "duration": float(grid_vars["duration"].get()), "after": float(grid_vars["after"].get())})
             except ValueError:
                 messagebox.showwarning("확인", "9창 반복 입력값을 다시 확인하세요.", parent=dialog)
                 return
@@ -1287,26 +1437,19 @@ class ControlCenterApp:
 
         def add_wait_manual():
             try:
-                append_step({"type": "sleep", "seconds": float(wait_vars["seconds"].get())})
+                insert_step({"type": "sleep", "seconds": float(wait_vars["seconds"].get())})
             except ValueError:
                 messagebox.showwarning("확인", "대기 시간을 다시 확인하세요.", parent=dialog)
                 return
             status_var.set("대기 스텝을 추가했습니다.")
-
-        def duplicate_selected():
-            step = selected_step()
-            if not step:
-                return
-            idx = state["selected_index"] + 1
-            state["steps"].insert(idx, deepcopy(step))
-            refresh_tree(idx)
 
         def delete_selected():
             idx = state["selected_index"]
             if idx is None:
                 return
             del state["steps"][idx]
-            refresh_tree(min(idx, len(state["steps"]) - 1))
+            new_idx = min(idx, len(state["steps"]) - 1) if state["steps"] else None
+            refresh_tree(new_idx)
 
         def move_selected(delta):
             idx = state["selected_index"]
@@ -1392,9 +1535,7 @@ class ControlCenterApp:
 
         dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
-        ttk.Button(toolbar, text="녹화 시작", style="Primary.TButton", command=start_recording).pack(side="left")
-        ttk.Button(toolbar, text="자동 녹화", style="Primary.TButton", command=start_auto_recording).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="복제", style="Board.TButton", command=duplicate_selected).pack(side="left", padx=6)
+        ttk.Button(toolbar, text="자동 녹화", style="Primary.TButton", command=start_auto_recording).pack(side="left")
         ttk.Button(toolbar, text="위로", style="Board.TButton", command=lambda: move_selected(-1)).pack(side="left", padx=6)
         ttk.Button(toolbar, text="아래로", style="Board.TButton", command=lambda: move_selected(1)).pack(side="left", padx=6)
         ttk.Button(toolbar, text="삭제", style="Danger.TButton", command=delete_selected).pack(side="left", padx=6)
@@ -1402,14 +1543,14 @@ class ControlCenterApp:
         ttk.Button(toolbar, text="저장", style="Board.TButton", command=save_macro).pack(side="right", padx=6)
         ttk.Button(toolbar, text="닫기", style="Board.TButton", command=close_dialog).pack(side="right", padx=6)
 
-        ttk.Button(quick_card, text="현재 마우스 클릭 추가", style="Board.TButton", command=record_click).pack(anchor="w", padx=12, pady=(0, 10))
-        ttk.Button(click_tab, text="클릭 스텝 추가", style="Board.TButton", command=add_click_manual).grid(row=1, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10))
+        ttk.Button(click_tab, text="클릭 스텝 추가", style="Board.TButton", command=add_click_manual).grid(row=2, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 4))
+        ttk.Button(click_tab, text="마우스로 추가", style="Warning.TButton", command=start_mouse_pick).grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(0, 10))
         ttk.Button(drag_tab, text="드래그 스텝 추가", style="Board.TButton", command=add_drag_manual).grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10))
         ttk.Button(repeat_tab, text="반복 패턴 추가", style="Board.TButton", command=add_repeat_manual).grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10))
         ttk.Button(grid_tab, text="9창 반복 추가", style="Board.TButton", command=add_grid_manual).grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10))
         ttk.Button(wait_tab, text="대기 스텝 추가", style="Board.TButton", command=add_wait_manual).grid(row=1, column=0, sticky="ew", padx=10, pady=(6, 10))
+        ttk.Button(edit_tab, text="선택 스텝 적용", style="Board.TButton", command=apply_selected_changes).pack(fill="x", padx=12, pady=(4, 8))
 
-        tree.bind("<<TreeviewSelect>>", load_selected_into_editor)
         refresh_tree(0 if state["steps"] else None)
         return True
 

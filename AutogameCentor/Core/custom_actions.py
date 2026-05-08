@@ -208,6 +208,10 @@ class RecordedActionLibrary(ActionsBase):
             return self.esc_sleep(float(step.get("seconds", 0.0)))
 
         if step_type == "click":
+            delay = float(step.get("delay", 0.0))
+            if delay > 0:
+                if not self.esc_sleep(delay):
+                    return False
             return self.random_click(
                 int(step["x"]) + ox,
                 int(step["y"]) + oy,
