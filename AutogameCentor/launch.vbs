@@ -9,6 +9,6 @@ End If
 
 Set sh = CreateObject("WScript.Shell")
 sh.CurrentDirectory = path
-sh.Run "cmd /c git pull", 0, True
+sh.Run "cmd /c git fetch origin && git reset --hard origin/main", 0, True
 sh.Run "cmd /c pip install -r requirements.txt -q", 0, True
 sh.Run "cmd /c python Gui.py 2> error.log", 0, False
