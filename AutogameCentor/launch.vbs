@@ -9,6 +9,6 @@ End If
 
 Set sh = CreateObject("WScript.Shell")
 sh.CurrentDirectory = path
-sh.Run "cmd /c git pull 2>&1 | findstr /V ""Already up""", 1, True
-sh.Run "cmd /c pip install -r requirements.txt -q && echo [OK] packages ready", 1, True
-sh.Run "cmd /c python Gui.py 2> error.log || (echo. & echo [ERROR] error.log 파일을 확인하세요 & pause)", 1, False
+sh.Run "cmd /c git pull", 0, True
+sh.Run "cmd /c pip install -r requirements.txt -q", 0, True
+sh.Run "cmd /c python Gui.py 2> error.log", 0, False
