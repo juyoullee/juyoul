@@ -5,28 +5,14 @@ import keyboard
 
 from Core.action_base import ActionsBase
 from Core.action_specs import ActionSpec
+from Core.custom_actions import WINDOW_RANGE_1
 from Core.window_control import bring_to_front, minimize_window
 from games.Coordinates.L2m_coordi import L2mCoordinates
-
-
-window_range_1 = [
-    (0, 0), (640, 0), (1280, 0),
-    (0, 320), (640, 320), (1280, 320),
-    (0, 623), (640, 623), (1280, 623),
-]
 
 
 class L2mDayilyAction(ActionsBase):
     BASE_X = 320
     BASE_Y = 230
-
-    button_methods = [
-        "창불러오기", "창최소화", "절전모드","절전해제", "가방열기",
-        "UL이벤트던전", "우편받기", "사냥터귀환", "경매장", "전체루틴",
-        "이벤트제작", "UL정령계초기화", "시즌패스", "아이템강화",
-        "UL데일리", "UL물약구매", "UL캐시상점", "너구리상점", "UL여포던전",
-        "여포클릭", "고참상점","전체마을귀환"
-    ]
 
     def get_action_specs(self):
         return [
@@ -49,18 +35,21 @@ class L2mDayilyAction(ActionsBase):
             ActionSpec(id="l2m.power_save_off", label="절전해제", runner=self.절전해제, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.return_town", label="전체마을귀환", runner=self.전체마을귀환, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.party_disband", label="파티해체", runner=self.파티해체, board="l2m_dungeon", pre_focus="리니지2M"),
-            ActionSpec(id="l2m.party_disband", label="스케줄러실행", runner=self.스케줄러실행, board="l2m_dungeon", pre_focus="리니지2M"),
+            ActionSpec(id="l2m.scheduler", label="스케줄러실행", runner=self.스케줄러실행, board="l2m_dungeon", pre_focus="리니지2M"),
             ActionSpec(id="l2m.event_shop", label="달고나상점구매", runner=self.달고나상점구매, board="l2m", pre_focus="리니지2M"),
        
         ]
 
     def _focus_and_reset(self, rx, ry):
-        self.random_click(self.BASE_X + rx, self.BASE_Y + ry, 0.2)
+        if not self.random_click(self.BASE_X + rx, self.BASE_Y + ry, 0.2):
+            return False
         time.sleep(0.2)
+        return True
 
     def _run_windows(self, actions):
-        for idx, (rx, ry) in enumerate(window_range_1, 1):
-            self._focus_and_reset(rx, ry)
+        for idx, (rx, ry) in enumerate(WINDOW_RANGE_1, 1):
+            if not self._focus_and_reset(rx, ry):
+                return False
             if not self.run_actions(actions, rx, ry):
                 print(f"[FAIL] window={idx}")
                 return False
@@ -100,16 +89,18 @@ class L2mDayilyAction(ActionsBase):
 
     def 아이템강화(self):
         for part in L2mCoordinates.아이템강화.values():
-            for rx, ry in window_range_1:
-                self._focus_and_reset(rx, ry)
+            for rx, ry in WINDOW_RANGE_1:
+                if not self._focus_and_reset(rx, ry):
+                    return False
                 if not self.run_actions(part, rx, ry):
                     return False
         return True
 
     def 달고나상점구매(self):
         for part in L2mCoordinates.달고나이벤트.values():
-            for rx, ry in window_range_1:
-                self._focus_and_reset(rx, ry)
+            for rx, ry in WINDOW_RANGE_1:
+                if not self._focus_and_reset(rx, ry):
+                    return False
                 if not self.run_actions(part, rx, ry):
                     return False
         return True
@@ -120,7 +111,7 @@ class L2mDayilyAction(ActionsBase):
             if keyboard.is_pressed("esc"):
                 break
 
-            for rx, ry in window_range_1:
+            for rx, ry in WINDOW_RANGE_1:
                 if keyboard.is_pressed("esc"):
                     break
 
@@ -140,8 +131,6 @@ class L2mDayDungeonAction(ActionsBase):
     BASE_X = 320
     BASE_Y = 230
 
-    button_methods = ["L2M요일던전"]
-
     def get_action_specs(self):
         return [
             ActionSpec(
@@ -154,14 +143,17 @@ class L2mDayDungeonAction(ActionsBase):
         ]
 
     def _focus_and_reset(self, rx, ry):
-        self.random_click(self.BASE_X + rx, self.BASE_Y + ry, 0.2)
+        if not self.random_click(self.BASE_X + rx, self.BASE_Y + ry, 0.2):
+            return False
         time.sleep(0.2)
+        return True
 
     def L2M요일던전(self):
         weekday = datetime.datetime.today().weekday()
 
-        for idx, (ax, ay) in enumerate(window_range_1, 1):
-            self._focus_and_reset(ax, ay)
+        for idx, (ax, ay) in enumerate(WINDOW_RANGE_1, 1):
+            if not self._focus_and_reset(ax, ay):
+                return False
 
             if not self.run_actions(L2mCoordinates.DAY_DUNGEON[weekday], ax, ay):
                 print(f"[FAIL] window={idx}, dungeon")

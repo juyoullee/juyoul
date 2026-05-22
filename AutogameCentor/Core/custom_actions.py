@@ -174,8 +174,10 @@ class RecordedActionLibrary(ActionsBase):
         return True
 
     def _write_actions(self, actions):
-        with open(self.storage_path, "w", encoding="utf-8") as file:
+        tmp_path = self.storage_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as file:
             json.dump(actions, file, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, self.storage_path)
 
     def _make_runner(self, steps, loop_count=1, loop_infinite=False, window_9grid=False):
         frozen_steps = deepcopy(steps)

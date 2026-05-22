@@ -1,6 +1,7 @@
 import math
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -175,6 +176,28 @@ class ControlCenterApp:
         self._flush_id = self.root.after(300, self._flush_log_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _get_last_update_date(self) -> str:
+        try:
+            base = os.path.dirname(os.path.abspath(__file__))
+            result = subprocess.run(
+                ["git", "log", "-1", "--format=%ci"],
+                cwd=base,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            raw = result.stdout.strip()
+            if raw:
+                return datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+
+        try:
+            mtime = os.path.getmtime(os.path.abspath(__file__))
+            return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return "-"
+
     def _build_providers(self):
         return [
             Odin_Action(),
@@ -302,6 +325,15 @@ class ControlCenterApp:
             anchor="w",
         )
         self.status_label.pack(fill="x", pady=(3, 0))
+
+        tk.Label(
+            left,
+            text=f"최종 업데이트: {self._get_last_update_date()}",
+            bg="#0b1220",
+            fg="#475569",
+            font=("Malgun Gothic", 8),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 0))
 
         right = tk.Frame(top_bar, bg="#0b1220")
         right.pack(side="right")
@@ -820,6 +852,8 @@ class ControlCenterApp:
             "drag_start": None,
             "selected_index": None,
             "step_rows": [],
+            "min_sleep_seconds": 0.05,
+            "overlay_bounds": None,
         }
 
         name_var = tk.StringVar(value=existing["label"] if existing else "")
@@ -1129,19 +1163,21 @@ class ControlCenterApp:
                     pass
 
         def _create_record_overlay(screen_w, screen_h):
-            ov_w, ov_h = 225, 180
+            ov_w, ov_h = 235, 280
             x = screen_w - ov_w - 20
             y = screen_h - ov_h - 60
 
             ov = tk.Toplevel()
             ov.overrideredirect(True)
             ov.attributes("-topmost", True)
-            ov.attributes("-alpha", 0.92)
+            ov.attributes("-alpha", 0.93)
             ov.configure(bg="#1a1a2e")
             ov.geometry(f"{ov_w}x{ov_h}+{x}+{y}")
 
             count_label = tk.Label(ov, text="● 녹화중: 0 스텝", bg="#1a1a2e", fg="#e74c3c", font=("Malgun Gothic", 9, "bold"))
-            count_label.pack(fill="x", padx=6, pady=(6, 3))
+            count_label.pack(fill="x", padx=6, pady=(6, 2))
+
+            tk.Label(ov, text="F7: 마지막 취소  F8: 녹화 종료", bg="#1a1a2e", fg="#6b7280", font=("Malgun Gothic", 7)).pack(fill="x", padx=6, pady=(0, 3))
 
             tk.Frame(ov, bg="#2a2a4a", height=1).pack(fill="x", padx=6)
 
@@ -1179,10 +1215,51 @@ class ControlCenterApp:
 
             tk.Frame(ov, bg="#2a2a4a", height=1).pack(fill="x", padx=6)
 
-            tk.Button(ov, text="■ 녹화 종료", bg="#e74c3c", fg="white", font=("Malgun Gothic", 10, "bold"), relief="flat", cursor="hand2", activebackground="#c0392b", activeforeground="white", command=stop_auto_recording).pack(fill="x", padx=6, pady=(4, 6))
+            sleep_frame = tk.Frame(ov, bg="#1e2235")
+            sleep_frame.pack(fill="x", padx=4, pady=(4, 2))
+
+            tk.Label(sleep_frame, text="최소 슬립(초)", bg="#1e2235", fg="#9ca3af", font=("Malgun Gothic", 8, "bold")).pack(side="left", padx=4)
+            ov_sleep_var = tk.StringVar(value=str(state["min_sleep_seconds"]))
+            sleep_entry = tk.Entry(sleep_frame, textvariable=ov_sleep_var, width=5, font=("Consolas", 8), bg="#1e1e3a", fg="#f0f0f0", insertbackground="#f0f0f0", relief="flat")
+            sleep_entry.pack(side="left", padx=4)
+
+            def _apply_min_sleep(*_):
+                try:
+                    state["min_sleep_seconds"] = max(0.0, float(ov_sleep_var.get()))
+                except ValueError:
+                    pass
+
+            ov_sleep_var.trace_add("write", _apply_min_sleep)
+
+            tk.Frame(ov, bg="#2a2a4a", height=1).pack(fill="x", padx=6)
+
+            def _undo_last():
+                if state["steps"]:
+                    state["steps"].pop()
+                    lbl = state.get("overlay_count_label")
+                    if lbl:
+                        lbl.config(text=f"● 녹화중: {len(state['steps'])} 스텝")
+
+            tk.Button(ov, text="↩ 마지막 스텝 취소 (F7)", bg="#374151", fg="#d1d5db", font=("Malgun Gothic", 8, "bold"), relief="flat", cursor="hand2", activebackground="#4b5563", command=_undo_last).pack(fill="x", padx=6, pady=(4, 2))
+
+            tk.Button(ov, text="■ 녹화 종료 (F8)", bg="#e74c3c", fg="white", font=("Malgun Gothic", 10, "bold"), relief="flat", cursor="hand2", activebackground="#c0392b", activeforeground="white", command=stop_auto_recording).pack(fill="x", padx=6, pady=(2, 6))
 
             state["overlay"] = ov
             state["overlay_count_label"] = count_label
+
+            # 오버레이 위치를 메인 스레드에서 캐시 (pynput 스레드에서 winfo_* 직접 호출 불가)
+            def _cache_overlay_bounds(event=None):
+                try:
+                    state["overlay_bounds"] = (
+                        ov.winfo_x(), ov.winfo_y(),
+                        ov.winfo_width(), ov.winfo_height(),
+                    )
+                except Exception:
+                    pass
+
+            ov.bind("<Configure>", _cache_overlay_bounds)
+            ov.update_idletasks()
+            _cache_overlay_bounds()
 
         def _start_mouse_listener():
             from pynput import mouse as _pm
@@ -1190,68 +1267,114 @@ class ControlCenterApp:
             press_state = {"pos": None, "time": None}
 
             def on_click(x, y, button, pressed):
-                if button != _pm.Button.left:
-                    return
                 if not state.get("recording"):
-                    return False
-
-                if pressed:
-                    press_state["pos"] = (int(x), int(y))
-                    press_state["time"] = time.time()
+                    # 리스너는 stop_auto_recording에서 명시적으로 종료함
                     return
 
-                if press_state["pos"] is None:
-                    return
+                if button == _pm.Button.left:
+                    if pressed:
+                        press_state["pos"] = (int(x), int(y))
+                        press_state["time"] = time.time()
+                        return
 
-                end_x, end_y = int(x), int(y)
-                start_x, start_y = press_state["pos"]
-                dx = end_x - start_x
-                dy = end_y - start_y
-                distance = (dx ** 2 + dy ** 2) ** 0.5
-                now = time.time()
+                    if press_state["pos"] is None:
+                        return
 
-                ov = state.get("overlay")
-                if ov:
-                    try:
-                        ov_x = ov.winfo_x()
-                        ov_y = ov.winfo_y()
-                        ov_w = ov.winfo_width()
-                        ov_h = ov.winfo_height()
-                        if ov_x <= end_x <= ov_x + ov_w and ov_y <= end_y <= ov_y + ov_h:
+                    end_x, end_y = int(x), int(y)
+                    start_x, start_y = press_state["pos"]
+                    dx = end_x - start_x
+                    dy = end_y - start_y
+                    distance = (dx ** 2 + dy ** 2) ** 0.5
+                    now = time.time()
+
+                    # 오버레이 영역 클릭은 녹화 제외 (캐시된 bounds 사용 — 스레드 안전)
+                    bounds = state.get("overlay_bounds")
+                    if bounds:
+                        bx, by, bw, bh = bounds
+                        if bx <= end_x <= bx + bw and by <= end_y <= by + bh:
                             press_state["pos"] = None
                             return
-                    except Exception:
-                        pass
 
-                if distance > 10:
-                    if state["last_time"] is not None:
-                        drag_delay = round(now - state["last_time"], 2)
-                        if drag_delay >= 0.05:
-                            dialog.after(0, lambda d=drag_delay: _auto_append_step({"type": "sleep", "seconds": d}))
-                    hold_dur = max(0.1, round(now - press_state["time"], 2))
-                    step = {"type": "drag", "start_x": start_x, "start_y": start_y, "delta_x": dx, "delta_y": dy, "duration": hold_dur, "after": 0.05}
-                else:
-                    click_delay = 0.0
-                    if state["last_time"] is not None:
-                        click_delay = max(0.0, round(now - state["last_time"], 2))
-                    step = {"type": "click", "x": start_x, "y": start_y, "delay": click_delay, "after": 0.05, "note": ""}
+                    min_sleep = state.get("min_sleep_seconds", 0.05)
 
-                state["last_time"] = now
-                press_state["pos"] = None
-                dialog.after(0, lambda s=step: _auto_append_step(s))
+                    if distance > 10:
+                        # 드래그 전 대기 슬립 삽입
+                        if state["last_time"] is not None:
+                            drag_delay = round(now - state["last_time"], 2)
+                            if drag_delay >= min_sleep:
+                                dialog.after(0, lambda d=drag_delay: _auto_append_step({"type": "sleep", "seconds": d}))
+                        hold_dur = max(0.05, round(now - press_state["time"], 2))
+                        step = {
+                            "type": "drag",
+                            "start_x": start_x, "start_y": start_y,
+                            "delta_x": dx, "delta_y": dy,
+                            "duration": hold_dur, "after": 0.05,
+                        }
+                    else:
+                        click_delay = 0.0
+                        if state["last_time"] is not None:
+                            elapsed = round(now - state["last_time"], 2)
+                            click_delay = elapsed if elapsed >= min_sleep else 0.0
+                        step = {
+                            "type": "click",
+                            "x": start_x, "y": start_y,
+                            "delay": click_delay, "after": 0.05, "note": "",
+                        }
+
+                    state["last_time"] = now
+                    press_state["pos"] = None
+                    dialog.after(0, lambda s=step: _auto_append_step(s))
 
             listener = _pm.Listener(on_click=on_click)
             state["mouse_listener"] = listener
             listener.start()
 
-        def stop_auto_recording():
-            state["recording"] = False
-            listener = state.pop("mouse_listener", None)
-            if listener:
+        def _start_keyboard_listener():
+            try:
+                from pynput import keyboard as _kb
+            except ImportError:
+                return
+
+            def on_key_release(key):
+                if not state.get("recording"):
+                    return False
+
                 try:
-                    listener.stop()
+                    if key in (_kb.Key.f8,):
+                        dialog.after(0, stop_auto_recording)
+                        return False
+                    if key in (_kb.Key.f7,):
+                        def _undo():
+                            if state["steps"]:
+                                state["steps"].pop()
+                                lbl = state.get("overlay_count_label")
+                                if lbl:
+                                    try:
+                                        lbl.config(text=f"● 녹화중: {len(state['steps'])} 스텝")
+                                    except Exception:
+                                        pass
+                        dialog.after(0, _undo)
                 except Exception:
                     pass
+
+            kb_listener = _kb.Listener(on_release=on_key_release)
+            state["keyboard_listener"] = kb_listener
+            kb_listener.start()
+
+        def stop_auto_recording():
+            if not state.get("recording"):
+                return
+            state["recording"] = False
+            state["overlay_bounds"] = None
+
+            for key in ("mouse_listener", "keyboard_listener"):
+                listener = state.pop(key, None)
+                if listener:
+                    try:
+                        listener.stop()
+                    except Exception:
+                        pass
+
             overlay = state.pop("overlay", None)
             if overlay:
                 try:
@@ -1270,6 +1393,7 @@ class ControlCenterApp:
             state["recording"] = True
             state["last_time"] = None
             state["drag_start"] = None
+            state["overlay_bounds"] = None
 
             screen_w = self.root.winfo_screenwidth()
             screen_h = self.root.winfo_screenheight()
@@ -1279,7 +1403,8 @@ class ControlCenterApp:
             self.root.iconify()
             _create_record_overlay(screen_w, screen_h)
             _start_mouse_listener()
-            status_var.set("자동 녹화 시작. 화면 우하단 '■ 녹화 종료' 버튼으로 종료하세요.")
+            _start_keyboard_listener()
+            status_var.set("자동 녹화 시작. F8 또는 '■ 녹화 종료' 버튼으로 종료  |  F7: 마지막 스텝 취소")
 
         def start_mouse_pick():
             if state.get("recording"):
@@ -1679,7 +1804,6 @@ class ControlCenterApp:
                 f"delta=({step['delta_x']}, {step['delta_y']}) x{step['count']}"
             )
 
-        if step_type == "window_grid_click":
             return (
                 f"{index:02d}. GRID-CLICK layout={step.get('layout', 'l2m_9_grid')} "
                 f"base=({step['base_x']}, {step['base_y']})"

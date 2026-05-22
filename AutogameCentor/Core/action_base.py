@@ -17,9 +17,9 @@ class ActionsBase:
 
     def esc_sleep(self, seconds):
 
-        remaining = seconds
+        deadline = time.time() + seconds
 
-        while remaining > 0:
+        while time.time() < deadline:
 
             if keyboard.is_pressed("esc"):
                 print("ESC 중단")
@@ -27,7 +27,6 @@ class ActionsBase:
                 return False
 
             time.sleep(0.05)
-            remaining -= 0.05
 
         return True
 
@@ -125,8 +124,7 @@ class ActionsBase:
                 result = self.run_action(sub_action, ax, ay)
 
                 if result is False:
-                    print("repeat 내부 종료")
-                    continue
+                    return False
 
             return True
 

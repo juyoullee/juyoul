@@ -24,6 +24,21 @@ _CLICK_MAP = {"좌클릭": "left", "우클릭": "right", "더블클릭": "double
 _CLICK_LABEL = {v: k for k, v in _CLICK_MAP.items()}
 
 
+def _maximize_window(window_title):
+    matched = []
+
+    def _enum(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if window_title in title:
+                matched.append(hwnd)
+
+    win32gui.EnumWindows(_enum, None)
+    if matched:
+        win32gui.ShowWindow(matched[0], win32con.SW_MAXIMIZE)
+        win32gui.SetForegroundWindow(matched[0])
+
+
 class NightCrowImageSearch(ActionsBase):
     def __init__(self):
         super().__init__()
@@ -60,7 +75,7 @@ class NightCrowImageSearch(ActionsBase):
             ActionSpec(
                 id="nightcrow.maximize1",
                 label="1번창 최대화",
-                runner=lambda: self._maximize_game_window("NIGHT CROWS(1)"),
+                runner=lambda: _maximize_window("NIGHT CROWS(1)"),
                 board="nightcrow",
                 countdown=0,
                 background=False,
@@ -69,27 +84,13 @@ class NightCrowImageSearch(ActionsBase):
             ActionSpec(
                 id="nightcrow.maximize2",
                 label="2번창 최대화",
-                runner=lambda: self._maximize_game_window("NIGHT CROWS(2)"),
+                runner=lambda: _maximize_window("NIGHT CROWS(2)"),
                 board="nightcrow",
                 countdown=0,
                 background=False,
                 minimize_gui=False,
             ),
         ]
-
-    def _maximize_game_window(self, window_title):
-        matched = []
-
-        def _enum(hwnd, _):
-            if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                if window_title in title:
-                    matched.append(hwnd)
-
-        win32gui.EnumWindows(_enum, None)
-        if matched:
-            win32gui.ShowWindow(matched[0], win32con.SW_MAXIMIZE)
-            win32gui.SetForegroundWindow(matched[0])
 
     def _open_panel(self):
         if self._panel and self._panel.is_open():
@@ -165,8 +166,8 @@ class NightCrowImageSearch(ActionsBase):
 
                 except pyautogui.ImageNotFoundException:
                     pass
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[NightCrow] 이미지 서치 오류: {e}")
 
             time.sleep(random.uniform(0.7, 1.6))
 
@@ -296,20 +297,6 @@ class NightCrowPanel:
         self._win.destroy()
         self._win = None
 
-    def _maximize_game_window(self, window_title):
-        matched = []
-
-        def _enum(hwnd, _):
-            if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                if window_title in title:
-                    matched.append(hwnd)
-
-        win32gui.EnumWindows(_enum, None)
-        if matched:
-            win32gui.ShowWindow(matched[0], win32con.SW_MAXIMIZE)
-            win32gui.SetForegroundWindow(matched[0])
-
     def _build_ui(self):
         status_bar = tk.Frame(self._win, bg="#131f2e")
         status_bar.pack(fill="x", padx=12, pady=(12, 0))
@@ -364,14 +351,14 @@ class NightCrowPanel:
             toolbar,
             text="1번창 최대화",
             style="Board.TButton",
-            command=lambda: self._maximize_game_window("NIGHT CROWS(1)"),
+            command=lambda: _maximize_window("NIGHT CROWS(1)"),
         ).pack(side="left", padx=(0, 6))
 
         ttk.Button(
             toolbar,
             text="2번창 최대화",
             style="Board.TButton",
-            command=lambda: self._maximize_game_window("NIGHT CROWS(2)"),
+            command=lambda: _maximize_window("NIGHT CROWS(2)"),
         ).pack(side="left")
 
         sep = tk.Frame(self._win, bg="#1e2d40", height=1)
