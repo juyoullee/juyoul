@@ -634,6 +634,9 @@ class ControlCenterApp:
         except Exception:
             pass
 
+        if self._macro_builder_active or self._macro_manager_active:
+            return
+
         self._set_boards_locked(False)
         if not self.emergency_stop:
             self._update_status_label("대기 중", "#4ade80")
@@ -1342,7 +1345,6 @@ class ControlCenterApp:
                 try:
                     if key in (_kb.Key.f8,):
                         dialog.after(0, stop_auto_recording)
-                        return False
                     if key in (_kb.Key.f7,):
                         def _undo():
                             if state["steps"]:
@@ -1370,10 +1372,7 @@ class ControlCenterApp:
             for key in ("mouse_listener", "keyboard_listener"):
                 listener = state.pop(key, None)
                 if listener:
-                    try:
-                        listener.stop()
-                    except Exception:
-                        pass
+                    threading.Thread(target=listener.stop, daemon=True).start()
 
             overlay = state.pop("overlay", None)
             if overlay:
@@ -1641,20 +1640,18 @@ class ControlCenterApp:
 
         def close_dialog():
             state["recording"] = False
-            listener = state.pop("mouse_listener", None)
-            if listener:
-                try:
-                    listener.stop()
-                except Exception:
-                    pass
+            for key in ("mouse_listener", "keyboard_listener"):
+                listener = state.pop(key, None)
+                if listener:
+                    threading.Thread(target=listener.stop, daemon=True).start()
             overlay = state.pop("overlay", None)
             if overlay:
                 try:
                     overlay.destroy()
                 except Exception:
                     pass
-            self._restore_gui()
             self._macro_builder_active = False
+            self._restore_gui()
             dialog.grab_release()
             dialog.destroy()
 
@@ -1836,6 +1833,8 @@ class ControlCenterApp:
 def main():
     app = ControlCenterApp()
     app.run()
+
+
 
 
 if __name__ == "__main__":
