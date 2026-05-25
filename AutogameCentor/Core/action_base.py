@@ -15,14 +15,17 @@ class ActionsBase:
     # 공통 제어
     # =====================================
 
+    def _is_stop_pressed(self):
+        return keyboard.is_pressed("esc") or keyboard.is_pressed("`")
+
     def esc_sleep(self, seconds):
 
         deadline = time.time() + seconds
 
         while time.time() < deadline:
 
-            if keyboard.is_pressed("esc"):
-                print("ESC 중단")
+            if self._is_stop_pressed():
+                print("중단 키 감지")
                 self.RUNNING = False
                 return False
 
@@ -36,8 +39,8 @@ class ActionsBase:
 
     def random_click(self, x, y, timer):
 
-        if keyboard.is_pressed("esc"):
-            print("ESC 중단")
+        if self._is_stop_pressed():
+            print("중단 키 감지")
             self.RUNNING = False
             return False
 
@@ -52,8 +55,8 @@ class ActionsBase:
 
     def random_moveto(self, x, y, timer):
 
-        if keyboard.is_pressed("esc"):
-            print("ESC 중단")
+        if self._is_stop_pressed():
+            print("중단 키 감지")
             self.RUNNING = False
             return False
 

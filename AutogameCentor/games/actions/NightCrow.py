@@ -128,7 +128,7 @@ class NightCrowImageSearch(ActionsBase):
 
     def _search_loop(self):
         while self._running and self.RUNNING:
-            if keyboard.is_pressed("esc"):
+            if keyboard.is_pressed("esc") or keyboard.is_pressed("`"):
                 self._running = False
                 self.RUNNING = False
                 break
