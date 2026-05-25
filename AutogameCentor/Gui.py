@@ -1369,10 +1369,14 @@ class ControlCenterApp:
             state["recording"] = False
             state["overlay_bounds"] = None
 
+            _stop_threads = []
             for key in ("mouse_listener", "keyboard_listener"):
                 listener = state.pop(key, None)
                 if listener:
-                    threading.Thread(target=listener.stop, daemon=True).start()
+                    t = threading.Thread(target=listener.stop, daemon=True)
+                    t.start()
+                    _stop_threads.append(t)
+            state["_listener_stop_threads"] = _stop_threads
 
             overlay = state.pop("overlay", None)
             if overlay:
@@ -1389,6 +1393,8 @@ class ControlCenterApp:
         def start_auto_recording():
             if state["recording"]:
                 return
+            for t in state.pop("_listener_stop_threads", []):
+                t.join(timeout=1.0)
             state["recording"] = True
             state["last_time"] = None
             state["drag_start"] = None
