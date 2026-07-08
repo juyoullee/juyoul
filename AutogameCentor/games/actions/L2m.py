@@ -1,4 +1,6 @@
 import datetime
+import json
+import os
 import time
 
 import keyboard
@@ -8,6 +10,23 @@ from Core.action_specs import ActionSpec
 from Core.custom_actions import WINDOW_RANGE_1
 from Core.window_control import bring_to_front, minimize_window
 from games.Coordinates.L2m_coordi import L2mCoordinates
+
+_SETTINGS_PATH = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "app_settings.json"))
+
+
+def _load_settings() -> dict:
+    try:
+        with open(_SETTINGS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_settings(data: dict):
+    tmp = _SETTINGS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _SETTINGS_PATH)
 
 
 class L2mDayilyAction(ActionsBase):
@@ -64,9 +83,25 @@ class L2mDayilyAction(ActionsBase):
         return True
 
     절전모드 = lambda self: self._run_windows(L2mCoordinates.절전모드)
-    UL데일리 = lambda self: self._run_windows(L2mCoordinates.Dayily)
-    UL물약구매 = lambda self: self._run_windows(L2mCoordinates.potion)
     UL캐시상점 = lambda self: self._run_windows(L2mCoordinates.cashShop)
+
+    def UL데일리(self):
+        include_2nd = _load_settings().get("데일리_2번탭포함", True)
+        dayily = {k: v for k, v in L2mCoordinates.Dayily.items()
+                  if include_2nd or not k.startswith("데일리_2번탭")}
+        return self._run_windows(dayily)
+
+    def UL이벤트던전(self):
+        include_select = _load_settings().get("이벤트던전_선택포함", False)
+        dungeon = {k: v for k, v in L2mCoordinates.EventDungeon.items()
+                   if include_select or k != "이벤트던전_선택"}
+        return self._run_windows(dungeon)
+
+    def UL물약구매(self):
+        pos = _load_settings().get("잡화상인_위치", 3)
+        potion = dict(L2mCoordinates.potion)
+        potion["기본_잡화상인"] = L2mCoordinates.JAPHA_POSITIONS.get(pos, L2mCoordinates.JAPHA_POSITIONS[3])
+        return self._run_windows(potion)
     우편받기 = lambda self: self._run_windows(L2mCoordinates.우편받기)
     가방열기 = lambda self: self._run_windows(L2mCoordinates.가방열기)
     사냥터귀환 = lambda self: self._run_windows(L2mCoordinates.사냥터귀환)
@@ -150,12 +185,16 @@ class L2mDayDungeonAction(ActionsBase):
 
     def L2M요일던전(self):
         weekday = datetime.datetime.today().weekday()
+        tab_num = _load_settings().get("요일던전_탭", 4)
+        tab_click = L2mCoordinates.DAY_DUNGEON_TAB.get(tab_num, L2mCoordinates.DAY_DUNGEON_TAB[4])
 
         for idx, (ax, ay) in enumerate(WINDOW_RANGE_1, 1):
             if not self._focus_and_reset(ax, ay):
                 return False
 
-            if not self.run_actions(L2mCoordinates.DAY_DUNGEON[weekday], ax, ay):
+            steps = list(L2mCoordinates.DAY_DUNGEON[weekday])
+            steps[3] = tab_click
+            if not self.run_actions(steps, ax, ay):
                 print(f"[FAIL] window={idx}, dungeon")
                 return False
 

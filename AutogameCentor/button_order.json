@@ -1,0 +1,18 @@
+{
+  "nightcrows": [
+    "nightcrows.panel",
+    "nightcrows.daily",
+    "nightcrows.maximize1",
+    "nightcrows.maximize2",
+    "macro.macro"
+  ],
+  "l2m_dungeon": [
+    "l2m.power_save",
+    "l2m.power_save_off",
+    "l2m.return_hunt",
+    "l2m.return_town",
+    "l2m.party_disband",
+    "l2m.scheduler",
+    "l2m.day_dungeon"
+  ]
+}

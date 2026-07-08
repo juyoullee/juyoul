@@ -1,6 +1,8 @@
+import json
 import math
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -14,7 +16,7 @@ from tkinter import messagebox, ttk
 from Core.action_specs import ActionSpec, BoardSpec
 from Core.custom_actions import RecordedActionLibrary
 from Core.window_control import bring_to_front, count_windows, minimize_window
-from games.actions.NightClows import NightClows
+from games.actions.NightCrows import NightCrows
 from games.actions.L2m import L2mDayDungeonAction, L2mDayilyAction
 from games.actions.Odin import Odin_Action
 
@@ -24,13 +26,15 @@ APP_TITLE = "ControlCentor"
 APP_SIZE = "1260x900"
 LOG_PATH = os.path.join(os.path.dirname(__file__), "controlcentor.log")
 CUSTOM_ACTIONS_PATH = os.path.join(os.path.dirname(__file__), "custom_actions.json")
-ACTION_COOLDOWN_SECONDS = 10
+BUTTON_ORDER_PATH = os.path.join(os.path.dirname(__file__), "button_order.json")
+APP_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "app_settings.json")
+ACTION_COOLDOWN_SECONDS = 5
 ACTION_TIMEOUT_SECONDS = 1800
 
 BOARD_OPTIONS = [
     ("odin", "ODIN"),
     ("l2m", "Lineage2M"),
-    ("nightclows", "NightClows"),
+    ("nightcrows", "NightCrows"),
     ("l2m_dungeon", "L2M Dungeon"),
     ("l2m_custom", "L2M Custom"),
 ]
@@ -74,47 +78,124 @@ def safe_minimize(title):
 
 class AutoButtonGrid:
 
-    def __init__(self, parent, on_click, columns=4):
+    def __init__(self, parent, on_click, columns=4, board_id=None, save_order=None):
         self.parent = parent
         self.on_click = on_click
         self.columns = columns
+        self.board_id = board_id
+        self.save_order = save_order
         self.buttons: list[ttk.Button] = []
         self._fixed_disabled: set[int] = set()
+        self._actions: list = []
+        self._drag: dict = {
+            "source": None, "moved": False,
+            "start_x": 0, "start_y": 0, "highlight": None,
+        }
 
         for col in range(columns):
             parent.columnconfigure(col, weight=1)
 
     def render(self, actions):
+        for child in self.parent.winfo_children():
+            child.destroy()
         self.buttons.clear()
         self._fixed_disabled.clear()
+        self._actions = list(actions)
 
         if not actions:
-            placeholder = tk.Label(
+            tk.Label(
                 self.parent,
                 text="등록된 동작이 없습니다.",
                 bg=self.parent.cget("bg"),
                 fg="#7f8a9a",
                 font=("Malgun Gothic", 10),
                 anchor="w",
-            )
-            placeholder.grid(row=0, column=0, sticky="w")
+            ).grid(row=0, column=0, sticky="w")
             return
 
-        for index, spec in enumerate(actions):
+        for index, spec in enumerate(self._actions):
             row, col = divmod(index, self.columns)
-            button = ttk.Button(
-                self.parent,
-                text=spec.label,
-                style="Board.TButton",
-                command=lambda current=spec: self.on_click(current),
-            )
+            btn = ttk.Button(self.parent, text=spec.label, style="Board.TButton")
+            btn.grid(row=row, column=col, padx=6, pady=6, sticky="ew")
 
             if not spec.enabled:
-                button.state(["disabled"])
+                btn.state(["disabled"])
                 self._fixed_disabled.add(index)
+            else:
+                btn.bind("<ButtonPress-1>", lambda e, i=index: self._on_press(e, i))
+                btn.bind("<B1-Motion>", self._on_motion)
+                btn.bind("<ButtonRelease-1>", lambda e, s=spec: self._on_release(e, s))
 
-            button.grid(row=row, column=col, padx=6, pady=6, sticky="ew")
-            self.buttons.append(button)
+            self.buttons.append(btn)
+
+    def _on_press(self, event, index):
+        d = self._drag
+        d["source"] = index
+        d["moved"] = False
+        d["start_x"] = event.x_root
+        d["start_y"] = event.y_root
+        d["highlight"] = None
+
+    def _on_motion(self, event):
+        d = self._drag
+        if d["source"] is None:
+            return
+        if abs(event.x_root - d["start_x"]) > 6 or abs(event.y_root - d["start_y"]) > 6:
+            d["moved"] = True
+        if not d["moved"]:
+            return
+
+        target = self._find_button_at(event.x_root, event.y_root)
+        prev = d["highlight"]
+        if prev is not None and prev < len(self.buttons):
+            try:
+                self.buttons[prev].configure(style="Board.TButton")
+            except Exception:
+                pass
+        if target is not None and target != d["source"]:
+            try:
+                self.buttons[target].configure(style="Primary.TButton")
+            except Exception:
+                pass
+            d["highlight"] = target
+        else:
+            d["highlight"] = None
+
+    def _on_release(self, event, spec):
+        d = self._drag
+        prev = d["highlight"]
+        if prev is not None and prev < len(self.buttons):
+            try:
+                self.buttons[prev].configure(style="Board.TButton")
+            except Exception:
+                pass
+
+        if not d["moved"]:
+            self.on_click(spec)
+        else:
+            target = self._find_button_at(event.x_root, event.y_root)
+            if target is not None and target != d["source"]:
+                self._actions[d["source"]], self._actions[target] = (
+                    self._actions[target], self._actions[d["source"]]
+                )
+                self.render(self._actions)
+                if self.save_order and self.board_id:
+                    self.save_order(self.board_id, [a.id for a in self._actions])
+
+        d["source"] = None
+        d["moved"] = False
+        d["highlight"] = None
+
+    def _find_button_at(self, x_root, y_root):
+        for i, btn in enumerate(self.buttons):
+            try:
+                bx = btn.winfo_rootx()
+                by = btn.winfo_rooty()
+                if bx <= x_root <= bx + btn.winfo_width() and by <= y_root <= by + btn.winfo_height():
+                    return i
+            except Exception:
+                pass
+        return None
 
     def set_locked(self, locked: bool):
         target = ["disabled"] if locked else ["!disabled"]
@@ -147,6 +228,7 @@ class ControlCenterApp:
         self._log_toggle_btn = None
         self._log_container = None
         self._grids: list[AutoButtonGrid] = []
+        self._button_order: dict[str, list[str]] = self._load_button_order()
         self._macro_builder_active = False
         self._macro_manager_active = False
         self._tick_id = None
@@ -200,7 +282,7 @@ class ControlCenterApp:
         return [
             Odin_Action(),
             L2mDayilyAction(),
-            NightClows(),
+            NightCrows(),
             L2mDayDungeonAction(),
             RecordedActionLibrary(
                 CUSTOM_ACTIONS_PATH,
@@ -209,11 +291,101 @@ class ControlCenterApp:
             ),
         ]
 
+    def _load_button_order(self) -> dict:
+        try:
+            with open(BUTTON_ORDER_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _load_app_settings(self) -> dict:
+        try:
+            with open(APP_SETTINGS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_app_setting(self, key: str, value):
+        data = self._load_app_settings()
+        data[key] = value
+        try:
+            tmp = APP_SETTINGS_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, APP_SETTINGS_PATH)
+        except Exception as e:
+            log(f"app_settings 저장 실패: {e}")
+
+    def _save_button_order(self, board_id: str, ids: list):
+        self._button_order[board_id] = ids
+        try:
+            tmp = BUTTON_ORDER_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._button_order, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, BUTTON_ORDER_PATH)
+        except Exception as e:
+            log(f"button_order 저장 실패: {e}")
+
+    def _sort_actions_for_board(self, board_id: str, actions: list) -> list:
+        order = self._button_order.get(board_id)
+        if not order:
+            return actions
+        order_map = {sid: i for i, sid in enumerate(order)}
+        known = sorted([a for a in actions if a.id in order_map], key=lambda a: order_map[a.id])
+        unknown = [a for a in actions if a.id not in order_map]
+        return known + unknown
+
+    def _build_l2m_settings(self, parent):
+        s = self._load_app_settings()
+
+        tk.Frame(parent, bg="#edf1f6", height=1).pack(fill="x", padx=14, pady=(4, 0))
+
+        sf = tk.Frame(parent, bg="#f8fafc")
+        sf.pack(fill="x", padx=14, pady=(6, 12))
+
+        tk.Label(sf, text="L2M 설정", bg="#f8fafc", fg="#607086",
+                 font=("Malgun Gothic", 9, "bold")).grid(row=0, column=0, columnspan=6, sticky="w", pady=(4, 6))
+
+        def row_label(text, r):
+            tk.Label(sf, text=text, bg="#f8fafc", fg="#142033",
+                     font=("Malgun Gothic", 9), width=14, anchor="w").grid(row=r, column=0, sticky="w", pady=3)
+
+        japha_var = tk.IntVar(value=s.get("잡화상인_위치", 3))
+        row_label("잡화상인 위치", 1)
+        for col, (val, lbl) in enumerate([(1, "1번째"), (2, "2번째"), (3, "3번째")], 1):
+            tk.Radiobutton(sf, text=lbl, variable=japha_var, value=val, bg="#f8fafc",
+                           font=("Malgun Gothic", 9), activebackground="#f8fafc",
+                           command=lambda v=japha_var: self._save_app_setting("잡화상인_위치", v.get())
+                           ).grid(row=1, column=col, sticky="w", padx=4)
+
+        tab_var = tk.IntVar(value=s.get("요일던전_탭", 4))
+        row_label("요일던전 탭", 2)
+        for col, (val, lbl) in enumerate([(4, "4번탭"), (5, "5번탭")], 1):
+            tk.Radiobutton(sf, text=lbl, variable=tab_var, value=val, bg="#f8fafc",
+                           font=("Malgun Gothic", 9), activebackground="#f8fafc",
+                           command=lambda v=tab_var: self._save_app_setting("요일던전_탭", v.get())
+                           ).grid(row=2, column=col, sticky="w", padx=4)
+
+        tab2_var = tk.BooleanVar(value=s.get("데일리_2번탭포함", True))
+        row_label("데일리 2번탭", 3)
+        tk.Checkbutton(sf, text="포함", variable=tab2_var, bg="#f8fafc",
+                       font=("Malgun Gothic", 9), activebackground="#f8fafc",
+                       command=lambda: self._save_app_setting("데일리_2번탭포함", tab2_var.get())
+                       ).grid(row=3, column=1, sticky="w", padx=4)
+
+        evt_var = tk.BooleanVar(value=s.get("이벤트던전_선택포함", False))
+        row_label("이벤트던전 선택", 4)
+        tk.Checkbutton(sf, text="포함", variable=evt_var, bg="#f8fafc",
+                       font=("Malgun Gothic", 9), activebackground="#f8fafc",
+                       command=lambda: self._save_app_setting("이벤트던전_선택포함", evt_var.get())
+                       ).grid(row=4, column=1, sticky="w", pady=(3, 6), padx=4)
+
     def _build_board_specs(self):
         return [
             BoardSpec(id="odin", title="ODIN", columns=3),
             BoardSpec(id="l2m", title="Lineage2M", columns=3),
-            BoardSpec(id="nightclows", title="NightClows", columns=3),
+            BoardSpec(id="nightcrows", title="NightCrows", columns=3),
             BoardSpec(id="l2m_dungeon", title="L2M Dungeon", columns=2),
             BoardSpec(id="l2m_custom", title="Macro Studio", columns=2),
         ]
@@ -509,9 +681,26 @@ class ControlCenterApp:
             self.board_frames[board.id] = inner
 
             actions = [spec for spec in self.action_specs if spec.board == board.id]
-            grid = AutoButtonGrid(inner, on_click=self.request_run, columns=board.columns)
-            grid.render(actions)
-            self._grids.append(grid)
+            actions = self._sort_actions_for_board(board.id, actions)
+
+            if board.id == "l2m":
+                nb = ttk.Notebook(inner)
+                nb.pack(fill="both", expand=True)
+
+                btn_tab = tk.Frame(nb, bg="#ffffff")
+                nb.add(btn_tab, text="  버튼  ")
+
+                settings_tab = tk.Frame(nb, bg="#f8fafc")
+                nb.add(settings_tab, text="  설정  ")
+
+                grid = AutoButtonGrid(btn_tab, on_click=self.request_run, columns=board.columns, board_id=board.id, save_order=self._save_button_order)
+                grid.render(actions)
+                self._grids.append(grid)
+                self._build_l2m_settings(settings_tab)
+            else:
+                grid = AutoButtonGrid(inner, on_click=self.request_run, columns=board.columns, board_id=board.id, save_order=self._save_button_order)
+                grid.render(actions)
+                self._grids.append(grid)
 
         self.content_frame.update_idletasks()
         self._sync_board_scrollregion()
@@ -966,6 +1155,7 @@ class ControlCenterApp:
         repeat_vars = {"start_x": tk.StringVar(), "start_y": tk.StringVar(), "delta_x": tk.StringVar(), "delta_y": tk.StringVar(), "count": tk.StringVar(value="3"), "after": tk.StringVar(value="0.08")}
         grid_vars = {"mode": tk.StringVar(value="클릭"), "base_x": tk.StringVar(), "base_y": tk.StringVar(), "delta_x": tk.StringVar(value="0"), "delta_y": tk.StringVar(value="0"), "duration": tk.StringVar(value="0.25"), "after": tk.StringVar(value="0.08")}
         wait_vars = {"seconds": tk.StringVar(value="0.50")}
+        random_sleep_vars = {"min_seconds": tk.StringVar(value="3600"), "max_seconds": tk.StringVar(value="7200")}
 
         self._build_numeric_form(click_tab, [("X", "x"), ("Y", "y"), ("딜레이", "delay"), ("후 대기", "after")], click_vars)
         self._build_numeric_form(drag_tab, [("시작 X", "start_x"), ("시작 Y", "start_y"), ("Delta X", "delta_x"), ("Delta Y", "delta_y"), ("지속시간", "duration"), ("후 대기", "after")], drag_vars)
@@ -995,6 +1185,7 @@ class ControlCenterApp:
         _TYPE_COLORS = {
             "click": ("#dbeafe", "#1e3a8a"),
             "sleep": ("#fef9c3", "#78350f"),
+            "random_sleep": ("#e0f2fe", "#0c4a6e"),
             "drag": ("#dcfce7", "#14532d"),
             "repeat_click_pattern": ("#ede9fe", "#3730a3"),
             "window_grid_click": ("#fce7f3", "#831843"),
@@ -1011,6 +1202,12 @@ class ControlCenterApp:
                 return f"({step['x']}, {step['y']}){d_str}  →{step.get('after', 0.05):.2f}"
             if t == "sleep":
                 return f"{step['seconds']:.2f}s"
+            if t == "random_sleep":
+                mn = step.get("min_seconds", 0)
+                mx = step.get("max_seconds", 0)
+                def _fmt(s):
+                    return f"{int(s//3600)}h{int((s%3600)//60)}m" if s >= 3600 else f"{s:.0f}s"
+                return f"{_fmt(mn)} ~ {_fmt(mx)}"
             if t == "drag":
                 return f"({step['start_x']},{step['start_y']}) +({step['delta_x']},{step['delta_y']}) {step.get('duration', 0.25):.2f}s"
             if t == "repeat_click_pattern":
@@ -1110,6 +1307,9 @@ class ControlCenterApp:
                     inspector_vars[key].set(str(step.get(key, "")))
             if step.get("type") == "sleep":
                 inspector_vars["seconds"].set(str(step.get("seconds", "")))
+            if step.get("type") == "random_sleep":
+                inspector_vars["seconds"].set(str(step.get("min_seconds", "")))
+                inspector_vars["after"].set(str(step.get("max_seconds", "")))
             if step.get("type") == "repeat_click_pattern":
                 inspector_vars["count"].set(str(step.get("count", "")))
             if step.get("type") in ("drag", "window_grid_drag"):
@@ -1496,6 +1696,12 @@ class ControlCenterApp:
                 }
             if step_type == "sleep":
                 return {"type": "sleep", "seconds": float(inspector_vars["seconds"].get())}
+            if step_type == "random_sleep":
+                mn = float(inspector_vars["seconds"].get())
+                mx = float(inspector_vars["after"].get())
+                if mn > mx:
+                    mn, mx = mx, mn
+                return {"type": "random_sleep", "min_seconds": mn, "max_seconds": mx}
             if step_type == "drag":
                 return {"type": "drag", "start_x": int(inspector_vars["start_x"].get()), "start_y": int(inspector_vars["start_y"].get()), "delta_x": int(inspector_vars["delta_x"].get()), "delta_y": int(inspector_vars["delta_y"].get()), "duration": float(inspector_vars["duration"].get() or 0.25), "after": float(inspector_vars["after"].get() or 0.05)}
             if step_type == "repeat_click_pattern":
@@ -1568,6 +1774,18 @@ class ControlCenterApp:
                 messagebox.showwarning("확인", "대기 시간을 다시 확인하세요.", parent=dialog)
                 return
             status_var.set("대기 스텝을 추가했습니다.")
+
+        def add_random_wait_manual():
+            try:
+                mn = float(random_sleep_vars["min_seconds"].get())
+                mx = float(random_sleep_vars["max_seconds"].get())
+                if mn > mx:
+                    mn, mx = mx, mn
+                insert_step({"type": "random_sleep", "min_seconds": mn, "max_seconds": mx})
+            except ValueError:
+                messagebox.showwarning("확인", "랜덤 대기 시간을 다시 확인하세요.", parent=dialog)
+                return
+            status_var.set("랜덤 대기 스텝을 추가했습니다.")
 
         def delete_selected():
             idx = state["selected_index"]
@@ -1672,7 +1890,28 @@ class ControlCenterApp:
         ttk.Button(drag_tab, text="드래그 스텝 추가", style="Board.TButton", command=add_drag_manual).grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10))
         ttk.Button(repeat_tab, text="반복 패턴 추가", style="Board.TButton", command=add_repeat_manual).grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10))
         ttk.Button(grid_tab, text="9창 반복 추가", style="Board.TButton", command=add_grid_manual).grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=(6, 10))
-        ttk.Button(wait_tab, text="대기 스텝 추가", style="Board.TButton", command=add_wait_manual).grid(row=1, column=0, sticky="ew", padx=10, pady=(6, 10))
+        ttk.Button(wait_tab, text="대기 스텝 추가", style="Board.TButton", command=add_wait_manual).grid(row=1, column=0, sticky="ew", padx=10, pady=(6, 4))
+
+        tk.Frame(wait_tab, bg="#d8e0ec", height=1).grid(row=2, column=0, sticky="ew", padx=10, pady=(6, 0))
+        tk.Label(wait_tab, text="랜덤 대기", bg="#ffffff", fg="#0c4a6e", font=("Malgun Gothic", 9, "bold")).grid(row=3, column=0, sticky="w", padx=10, pady=(6, 0))
+
+        rand_frame = tk.Frame(wait_tab, bg="#ffffff")
+        rand_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(4, 0))
+        rand_frame.columnconfigure(0, weight=1)
+        rand_frame.columnconfigure(1, weight=1)
+
+        min_f = tk.Frame(rand_frame, bg="#ffffff")
+        min_f.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        tk.Label(min_f, text="최소(초)", bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
+        ttk.Entry(min_f, textvariable=random_sleep_vars["min_seconds"]).pack(fill="x", pady=(4, 0))
+
+        max_f = tk.Frame(rand_frame, bg="#ffffff")
+        max_f.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        tk.Label(max_f, text="최대(초)", bg="#ffffff", fg="#142033", font=("Malgun Gothic", 10, "bold")).pack(anchor="w")
+        ttk.Entry(max_f, textvariable=random_sleep_vars["max_seconds"]).pack(fill="x", pady=(4, 0))
+
+        tk.Label(wait_tab, text="예) 1시간=3600  2시간=7200  1.5시간=5400", bg="#ffffff", fg="#9ca3af", font=("Malgun Gothic", 8)).grid(row=5, column=0, sticky="w", padx=10)
+        ttk.Button(wait_tab, text="랜덤 대기 추가", style="Board.TButton", command=add_random_wait_manual).grid(row=6, column=0, sticky="ew", padx=10, pady=(6, 10))
         ttk.Button(edit_tab, text="선택 스텝 적용", style="Board.TButton", command=apply_selected_changes).pack(fill="x", padx=12, pady=(4, 8))
 
         refresh_tree(0 if state["steps"] else None)
@@ -1739,6 +1978,12 @@ class ControlCenterApp:
             close_dialog()
             self.open_macro_manager()
 
+        def export_selected():
+            item = selected_action()
+            if not item:
+                return
+            self._open_export_dialog(dialog, item)
+
         def close_dialog():
             self._macro_manager_active = False
             dialog.grab_release()
@@ -1750,9 +1995,188 @@ class ControlCenterApp:
         controls.pack(fill="x", padx=16, pady=(0, 16))
         ttk.Button(controls, text="편집", style="Primary.TButton", command=edit_selected).pack(side="left")
         ttk.Button(controls, text="삭제", style="Danger.TButton", command=delete_selected).pack(side="left", padx=8)
+        ttk.Button(controls, text="파일로 내보내기", style="Board.TButton", command=export_selected).pack(side="left", padx=8)
         ttk.Button(controls, text="닫기", style="Board.TButton", command=close_dialog).pack(side="right")
 
         return True
+
+    def _open_export_dialog(self, parent, action):
+        actions_dir = os.path.join(os.path.dirname(__file__), "games", "actions")
+        file_options = []
+        for fname in sorted(os.listdir(actions_dir)):
+            if not fname.endswith(".py"):
+                continue
+            fpath = os.path.join(actions_dir, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if "ActionsBase" in content and "get_action_specs" in content:
+                    file_options.append((fname, fpath))
+            except Exception:
+                pass
+
+        if not file_options:
+            messagebox.showerror("오류", "대상 파일을 찾을 수 없습니다.", parent=parent)
+            return
+
+        dialog = tk.Toplevel(parent)
+        dialog.title("파일로 내보내기")
+        dialog.geometry("480x360")
+        dialog.configure(bg="#eef3f8")
+        dialog.transient(parent)
+        dialog.grab_set()
+
+        card = tk.Frame(dialog, bg="#ffffff", highlightbackground="#d8e0ec", highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(card, text="파일로 내보내기", bg="#ffffff", fg="#142033", font=("Malgun Gothic", 13, "bold")).pack(anchor="w", padx=16, pady=(16, 12))
+
+        form = tk.Frame(card, bg="#ffffff")
+        form.pack(fill="x", padx=16)
+        form.columnconfigure(1, weight=1)
+
+        def add_row(r, text, widget_fn):
+            tk.Label(form, text=text, bg="#ffffff", fg="#607086", font=("Malgun Gothic", 9), anchor="w", width=14).grid(row=r, column=0, sticky="w", pady=6)
+            w = widget_fn(form)
+            w.grid(row=r, column=1, sticky="ew", pady=6)
+            return w
+
+        file_var = tk.StringVar(value=file_options[0][0])
+        add_row(0, "대상 파일", lambda p: ttk.Combobox(p, textvariable=file_var, values=[f[0] for f in file_options], state="readonly"))
+
+        label_var = tk.StringVar(value=action["label"])
+        add_row(1, "버튼 레이블", lambda p: ttk.Entry(p, textvariable=label_var))
+
+        method_var = tk.StringVar(value=action["label"])
+        add_row(2, "메서드명", lambda p: ttk.Entry(p, textvariable=method_var))
+
+        board_var = tk.StringVar(value=action.get("board", ""))
+        add_row(3, "Board", lambda p: ttk.Combobox(p, textvariable=board_var, values=[b[0] for b in BOARD_OPTIONS]))
+
+        prefocus_var = tk.StringVar(value=action.get("pre_focus") or "")
+        add_row(4, "Pre Focus", lambda p: ttk.Entry(p, textvariable=prefocus_var))
+
+        def do_export():
+            fname = file_var.get()
+            fpath = next((f[1] for f in file_options if f[0] == fname), None)
+            if not fpath:
+                messagebox.showerror("오류", "파일을 찾을 수 없습니다.", parent=dialog)
+                return
+            method = method_var.get().strip()
+            lbl = label_var.get().strip()
+            board = board_var.get().strip()
+            prefocus = prefocus_var.get().strip()
+            if not method or not lbl:
+                messagebox.showerror("오류", "메서드명과 레이블을 입력하세요.", parent=dialog)
+                return
+            ok, msg = self._do_export_to_file(fpath, action["steps"], method, lbl, board, prefocus)
+            if ok:
+                messagebox.showinfo("완료", f"'{lbl}' 버튼이 {fname}에 추가되었습니다.\n앱을 재시작하면 버튼이 표시됩니다.", parent=dialog)
+                dialog.destroy()
+            else:
+                messagebox.showerror("오류", msg, parent=dialog)
+
+        btn_frame = tk.Frame(card, bg="#ffffff")
+        btn_frame.pack(fill="x", padx=16, pady=(12, 16))
+        ttk.Button(btn_frame, text="내보내기", style="Primary.TButton", command=do_export).pack(side="left")
+        ttk.Button(btn_frame, text="취소", style="Board.TButton", command=dialog.destroy).pack(side="left", padx=8)
+
+    def _do_export_to_file(self, file_path, steps, method_name, label, board, pre_focus):
+        tuples = []
+        i = 0
+        while i < len(steps):
+            s = steps[i]
+            if s["type"] == "click":
+                x, y = s["x"], s["y"]
+                if i + 1 < len(steps) and steps[i + 1]["type"] == "sleep":
+                    after = round(steps[i + 1]["seconds"], 2)
+                    i += 2
+                else:
+                    after = round(s.get("after", 0.05), 2)
+                    i += 1
+                tuples.append(("c", x, y, after))
+            elif s["type"] == "sleep":
+                tuples.append(("s", round(s["seconds"], 2)))
+                i += 1
+            else:
+                i += 1
+
+        const_name = "_" + re.sub(r"[^a-zA-Z0-9가-힣]+", "_", method_name).upper() + "_STEPS"
+        step_lines = []
+        for t in tuples:
+            if t[0] == "s":
+                step_lines.append(f'    ("s", {t[1]}),')
+            else:
+                _, x, y, after = t
+                step_lines.append(f'    ("c", {x:5d}, {y:4d}, {after}),')
+        const_code = f"{const_name} = [\n" + "\n".join(step_lines) + "\n]"
+        method_code = f"    def {method_name}(self):\n        return self._run_steps({const_name})\n"
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        full_text = "".join(lines)
+        class_match = re.search(r"^class (\w+)\(ActionsBase\)", full_text, re.MULTILINE)
+        if not class_match:
+            return False, "ActionsBase 클래스를 찾을 수 없습니다."
+        id_prefix = class_match.group(1).lower()
+
+        spec_code = (
+            f"            ActionSpec(\n"
+            f'                id="{id_prefix}.{method_name}",\n'
+            f'                label="{label}",\n'
+            f"                runner=self.{method_name},\n"
+            f'                board="{board}",\n'
+            f'                pre_focus="{pre_focus}",\n'
+            f"            ),"
+        )
+
+        class_idx = next((i for i, l in enumerate(lines) if re.match(r"^class \w+\(ActionsBase\):", l)), None)
+        spec_method_idx = next((i for i, l in enumerate(lines) if re.match(r"    def get_action_specs\(self\):", l)), None)
+        if class_idx is None:
+            return False, "클래스 정의를 찾을 수 없습니다."
+        if spec_method_idx is None:
+            return False, "get_action_specs 메서드를 찾을 수 없습니다."
+
+        return_idx = next((i for i in range(spec_method_idx, len(lines)) if re.match(r"\s+return \[", lines[i])), None)
+        if return_idx is None:
+            return False, "return [ 을 찾을 수 없습니다."
+
+        has_run_steps = any("def _run_steps" in l for l in lines)
+        run_steps_code = (
+            "    def _run_steps(self, steps):\n"
+            "        for step in steps:\n"
+            '            if step[0] == "s":\n'
+            "                if not self.esc_sleep(step[1]):\n"
+            "                    return False\n"
+            "            else:\n"
+            "                _, x, y, after = step\n"
+            "                if not self.random_click(x, y, after):\n"
+            "                    return False\n"
+            "        return True\n"
+        )
+
+        run_steps_insert_idx = None
+        if not has_run_steps:
+            for i in range(class_idx + 1, spec_method_idx):
+                if re.match(r"    def (?!__init__)\w+", lines[i]):
+                    run_steps_insert_idx = i
+                    break
+            if run_steps_insert_idx is None:
+                run_steps_insert_idx = class_idx + 1
+
+        # Insert from bottom to top to preserve line indices
+        lines.insert(return_idx + 1, spec_code + "\n")
+        lines.insert(spec_method_idx, method_code + "\n")
+        if not has_run_steps:
+            lines.insert(run_steps_insert_idx, "\n" + run_steps_code + "\n")
+        lines.insert(class_idx, "\n" + const_code + "\n\n")
+
+        tmp = file_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        os.replace(tmp, file_path)
+        return True, "성공"
 
     def _build_labeled_entry(self, parent, label, variable, row, column):
         frame = tk.Frame(parent, bg="#ffffff")
@@ -1789,6 +2213,9 @@ class ControlCenterApp:
 
         if step_type == "sleep":
             return f"{index:02d}. WAIT  {step['seconds']:.2f}s"
+
+        if step_type == "random_sleep":
+            return f"{index:02d}. RWAIT {step.get('min_seconds', 0):.0f}s ~ {step.get('max_seconds', 0):.0f}s"
 
         if step_type == "drag":
             return (

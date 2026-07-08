@@ -16,8 +16,8 @@ from Core.action_base import ActionsBase
 from Core.action_specs import ActionSpec
 
 _BASE_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_IMAGES_DIR = os.path.join(_BASE_DIR, "nightcrow_images")
-_IMAGES_JSON = os.path.join(_BASE_DIR, "nightcrow_images.json")
+_IMAGES_DIR = os.path.join(_BASE_DIR, "nightcrows_images")
+_IMAGES_JSON = os.path.join(_BASE_DIR, "nightcrows_images.json")
 
 _CLICK_OPTIONS = ["좌클릭", "우클릭", "더블클릭"]
 _CLICK_MAP = {"좌클릭": "left", "우클릭": "right", "더블클릭": "double"}
@@ -39,13 +39,52 @@ def _maximize_window(window_title):
         win32gui.SetForegroundWindow(matched[0])
 
 
-class NightCrowImageSearch(ActionsBase):
+_DAILY_STEPS = [
+    ("c", 1865,  78, 1.22), ("c", 1527, 960, 0.93),
+    ("c", 1692, 979, 0.49), ("c", 1690, 979, 0.24), ("c", 1690, 979, 0.80),
+    ("c",  910, 163, 0.99),
+    ("c", 1684, 979, 0.56), ("c", 1683, 979, 0.23), ("c", 1683, 979, 1.21),
+    ("c", 1859,  71, 0.58), ("c", 1861,  80, 1.06),
+    ("c", 1519, 443, 1.01),
+    ("c",  886, 861, 0.44), ("c",  886, 861, 0.38), ("c",  886, 861, 0.60),
+    ("c",  905, 863, 0.53), ("c", 1053, 861, 0.69),
+    ("c",  655, 756, 0.25), ("c",  653, 757, 0.26), ("c",  653, 757, 0.47),
+    ("c",  866, 775, 0.27), ("c",  866, 775, 0.31), ("c",  866, 775, 1.07),
+    ("c", 1540, 157, 0.76), ("c",  674, 166, 0.91),
+    ("c",  349, 955, 0.70),
+    ("c",  634, 819, 1.04), ("c",  632, 821, 1.39),
+    ("c",  794, 859, 0.82),
+    ("c", 1864,  98, 0.48), ("c", 1866,  83, 0.89),
+    ("c", 1540, 314, 0.62), ("c",  921, 170, 1.10),
+    ("c",  174, 967, 1.03),
+    ("c", 1864,  86, 0.97), ("c", 1523,  83, 1.51),
+    ("c",  410, 186, 1.06), ("c",  205, 455, 0.73),
+    ("c",  219, 979, 0.91), ("c", 1011, 836, 0.64),
+    ("c",  185, 507, 0.32), ("c",  185, 507, 0.70),
+    ("c",  212, 399, 0.87), ("c",  198, 980, 0.86),
+    ("c", 1041, 842, 0.68),
+    ("c",  181, 566, 0.30), ("c",  180, 566, 0.97),
+    ("c",  184, 183, 0.05),
+]
+
+
+class NightCrows(ActionsBase):
     def __init__(self):
         super().__init__()
         self._running = False
         self._panel = None
         os.makedirs(_IMAGES_DIR, exist_ok=True)
         self._items = self._load_items()
+
+    def _run_steps(self, steps):
+        for step in steps:
+            _, x, y, after = step
+            if not self.random_click(x, y, after):
+                return False
+        return True
+
+    def 데일리(self):
+        return self._run_steps(_DAILY_STEPS)
 
     def _load_items(self):
         try:
@@ -64,28 +103,36 @@ class NightCrowImageSearch(ActionsBase):
     def get_action_specs(self):
         return [
             ActionSpec(
-                id="nightcrow.panel",
+                id="nightcrows.daily",
+                label="데일리",
+                runner=self.데일리,
+                board="nightcrows",
+                pre_focus="NIGHT CROWS",
+                post_minimize="NIGHT CROWS",
+            ),
+            ActionSpec(
+                id="nightcrows.panel",
                 label="이미지 서치",
                 runner=self._open_panel,
-                board="nightcrow",
+                board="nightcrows",
                 countdown=0,
                 background=False,
                 minimize_gui=False,
             ),
             ActionSpec(
-                id="nightcrow.maximize1",
+                id="nightcrows.maximize1",
                 label="1번창 최대화",
                 runner=lambda: _maximize_window("NIGHT CROWS(1)"),
-                board="nightcrow",
+                board="nightcrows",
                 countdown=0,
                 background=False,
                 minimize_gui=False,
             ),
             ActionSpec(
-                id="nightcrow.maximize2",
+                id="nightcrows.maximize2",
                 label="2번창 최대화",
                 runner=lambda: _maximize_window("NIGHT CROWS(2)"),
-                board="nightcrow",
+                board="nightcrows",
                 countdown=0,
                 background=False,
                 minimize_gui=False,
@@ -96,7 +143,7 @@ class NightCrowImageSearch(ActionsBase):
         if self._panel and self._panel.is_open():
             self._panel.lift()
             return
-        self._panel = NightCrowPanel(
+        self._panel = _NightCrowsPanel(
             items=self._items,
             images_dir=_IMAGES_DIR,
             on_items_changed=self._on_items_changed,
@@ -167,7 +214,7 @@ class NightCrowImageSearch(ActionsBase):
                 except pyautogui.ImageNotFoundException:
                     pass
                 except Exception as e:
-                    print(f"[NightCrow] 이미지 서치 오류: {e}")
+                    print(f"[NightCrows] 이미지 서치 오류: {e}")
 
             time.sleep(random.uniform(0.7, 1.6))
 
@@ -242,7 +289,7 @@ class _ScreenCaptureOverlay:
         self._win.destroy()
 
 
-class NightCrowPanel:
+class _NightCrowsPanel:
     def __init__(self, items, images_dir, on_items_changed, on_start, on_stop, is_running):
         self._items = list(items)
         self._images_dir = images_dir
@@ -259,7 +306,7 @@ class NightCrowPanel:
 
     def open(self):
         self._win = tk.Toplevel()
-        self._win.title("Night Crow - 이미지 서치")
+        self._win.title("Night Clows - 이미지 서치")
         self._win.geometry("520x600")
         self._win.configure(bg="#0b1220")
         self._win.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -386,7 +433,7 @@ class NightCrowPanel:
 
         self._list_frame.bind(
             "<Configure>",
-            lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")),
+            lambda _: self._canvas.configure(scrollregion=self._canvas.bbox("all")),
         )
         self._canvas.bind(
             "<Configure>",
@@ -461,7 +508,7 @@ class NightCrowPanel:
             combo.pack(side="top", pady=(0, 4))
             combo.bind(
                 "<<ComboboxSelected>>",
-                lambda e, idx=i, var=click_var: self._on_click_type_changed(idx, var.get()),
+                lambda _, idx=i, var=click_var: self._on_click_type_changed(idx, var.get()),
             )
 
             ttk.Button(

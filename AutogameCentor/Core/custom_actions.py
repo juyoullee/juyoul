@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import re
 from copy import deepcopy
 
@@ -208,6 +209,11 @@ class RecordedActionLibrary(ActionsBase):
 
         if step_type == "sleep":
             return self.esc_sleep(float(step.get("seconds", 0.0)))
+
+        if step_type == "random_sleep":
+            mn = float(step.get("min_seconds", 0.0))
+            mx = float(step.get("max_seconds", mn))
+            return self.esc_sleep(random.uniform(mn, mx))
 
         if step_type == "click":
             delay = float(step.get("delay", 0.0))
