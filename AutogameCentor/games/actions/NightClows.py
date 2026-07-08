@@ -15,7 +15,7 @@ from Core.action_base import ActionsBase
 from Core.action_specs import ActionSpec
 
 
-class CarbalRed(ActionsBase):
+class NightClows(ActionsBase):
 
     # ===============================
     # 좌표
@@ -148,4 +148,4 @@ class CarbalRed(ActionsBase):
 
 
 if __name__ == "__main__":
-    CarbalRed().물약()
+    NightClows().물약()

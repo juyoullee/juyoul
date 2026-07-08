@@ -14,7 +14,7 @@ from tkinter import messagebox, ttk
 from Core.action_specs import ActionSpec, BoardSpec
 from Core.custom_actions import RecordedActionLibrary
 from Core.window_control import bring_to_front, count_windows, minimize_window
-from games.actions.Carbal import CarbalRed
+from games.actions.NightClows import NightClows
 from games.actions.L2m import L2mDayDungeonAction, L2mDayilyAction
 from games.actions.NightCrow import NightCrowImageSearch
 from games.actions.Odin import Odin_Action
@@ -202,7 +202,7 @@ class ControlCenterApp:
         return [
             Odin_Action(),
             L2mDayilyAction(),
-            CarbalRed(),
+            NightClows(),
             L2mDayDungeonAction(),
             NightCrowImageSearch(),
             RecordedActionLibrary(
