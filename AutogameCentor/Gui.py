@@ -874,6 +874,10 @@ class ControlCenterApp:
         self._update_status_label("대기 중", "#4ade80")
         log("EMERGENCY STOP OFF")
 
+    def _restart_app(self):
+        self.root.destroy()
+        subprocess.Popen([sys.executable] + sys.argv)
+
     def _reset_windows(self):
         failed = []
         for title in EXPECTED_WINDOW_COUNTS:
@@ -2061,8 +2065,8 @@ class ControlCenterApp:
                 return
             ok, msg = self._do_export_to_file(fpath, action["steps"], method, lbl, board, prefocus)
             if ok:
-                messagebox.showinfo("완료", f"'{lbl}' 버튼이 {fname}에 추가되었습니다.\n앱을 재시작하면 버튼이 표시됩니다.", parent=dialog)
                 dialog.destroy()
+                self._restart_app()
             else:
                 messagebox.showerror("오류", msg, parent=dialog)
 
