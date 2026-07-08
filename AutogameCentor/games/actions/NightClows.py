@@ -112,18 +112,18 @@ class NightClows(ActionsBase):
     def get_action_specs(self):
         return [
             ActionSpec(
-                id="carbal.daily",
+                id="nightclows.daily",
                 label="데일리",
                 runner=self.데일리,
-                board="carbal",
+                board="nightclows",
                 pre_focus="CARBAL",
                 post_minimize="CARBAL",
             ),
             ActionSpec(
-                id="carbal.potion",
+                id="nightclows.potion",
                 label="물약",
                 runner=self.물약,
-                board="carbal",
+                board="nightclows",
                 pre_focus="CARBAL",
             ),
         ]

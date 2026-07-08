@@ -16,7 +16,6 @@ from Core.custom_actions import RecordedActionLibrary
 from Core.window_control import bring_to_front, count_windows, minimize_window
 from games.actions.NightClows import NightClows
 from games.actions.L2m import L2mDayDungeonAction, L2mDayilyAction
-from games.actions.NightCrow import NightCrowImageSearch
 from games.actions.Odin import Odin_Action
 
 sys.dont_write_bytecode = True
@@ -31,10 +30,9 @@ ACTION_TIMEOUT_SECONDS = 1800
 BOARD_OPTIONS = [
     ("odin", "ODIN"),
     ("l2m", "Lineage2M"),
-    ("carbal", "CARBAL"),
+    ("nightclows", "NightClows"),
     ("l2m_dungeon", "L2M Dungeon"),
     ("l2m_custom", "L2M Custom"),
-    ("nightcrow", "Night Crow"),
 ]
 BOARD_LABELS = {board_id: label for board_id, label in BOARD_OPTIONS}
 WINDOW_LAYOUT_OPTIONS = [
@@ -204,7 +202,6 @@ class ControlCenterApp:
             L2mDayilyAction(),
             NightClows(),
             L2mDayDungeonAction(),
-            NightCrowImageSearch(),
             RecordedActionLibrary(
                 CUSTOM_ACTIONS_PATH,
                 self.open_macro_creator,
@@ -216,10 +213,9 @@ class ControlCenterApp:
         return [
             BoardSpec(id="odin", title="ODIN", columns=3),
             BoardSpec(id="l2m", title="Lineage2M", columns=3),
-            BoardSpec(id="carbal", title="CARBAL", columns=3),
+            BoardSpec(id="nightclows", title="NightClows", columns=3),
             BoardSpec(id="l2m_dungeon", title="L2M Dungeon", columns=2),
             BoardSpec(id="l2m_custom", title="Macro Studio", columns=2),
-            BoardSpec(id="nightcrow", title="Night Crow", columns=2),
         ]
 
     def _collect_actions(self):
