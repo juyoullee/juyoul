@@ -1467,8 +1467,7 @@ class ControlCenterApp:
 
             def on_click(x, y, button, pressed):
                 if not state.get("recording"):
-                    # 리스너는 stop_auto_recording에서 명시적으로 종료함
-                    return
+                    return False
 
                 if button == _pm.Button.left:
                     if pressed:
@@ -1564,15 +1563,8 @@ class ControlCenterApp:
                 return
             state["recording"] = False
             state["overlay_bounds"] = None
-
-            _stop_threads = []
-            for key in ("mouse_listener", "keyboard_listener"):
-                listener = state.pop(key, None)
-                if listener:
-                    t = threading.Thread(target=listener.stop, daemon=True)
-                    t.start()
-                    _stop_threads.append(t)
-            state["_listener_stop_threads"] = _stop_threads
+            state.pop("mouse_listener", None)
+            state.pop("keyboard_listener", None)
 
             overlay = state.pop("overlay", None)
             if overlay:
@@ -1589,8 +1581,6 @@ class ControlCenterApp:
         def start_auto_recording():
             if state["recording"]:
                 return
-            for t in state.pop("_listener_stop_threads", []):
-                t.join(timeout=1.0)
             state["recording"] = True
             state["last_time"] = None
             state["drag_start"] = None
