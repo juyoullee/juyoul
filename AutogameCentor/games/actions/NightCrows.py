@@ -68,6 +68,25 @@ _DAILY_STEPS = [
 ]
 
 
+
+_우편받기_STEPS = [
+    ("s", 1.06),
+    ("c",   930,   58, 0.05),
+    ("c",   763,  469, 0.05),
+    ("c",   877,  491, 0.05),
+    ("c",   877,  491, 0.05),
+    ("c",   877,  491, 0.05),
+    ("c",   931,   57, 0.05),
+    ("c",   932,  575, 0.05),
+    ("c",   766,  993, 0.05),
+    ("c",   882, 1009, 0.05),
+    ("c",   884, 1009, 0.05),
+    ("c",   884, 1009, 0.05),
+    ("c",   936,  571, 0.05),
+    ("c",    24,  450, 0.05),
+    ("c",    26,  968, 0.05),
+]
+
 class NightCrows(ActionsBase):
     def __init__(self):
         super().__init__()
@@ -100,15 +119,24 @@ class NightCrows(ActionsBase):
         with open(_IMAGES_JSON, "w", encoding="utf-8") as f:
             json.dump(self._items, f, ensure_ascii=False, indent=2)
 
+    def 우편받기(self):
+        return self._run_steps(_우편받기_STEPS)
+
     def get_action_specs(self):
         return [
+            ActionSpec(
+                id="nightcrows.우편받기",
+                label="우편받기",
+                runner=self.우편받기,
+                board="nightcrows",
+                pre_focus="Lineage2M",
+            ),
             ActionSpec(
                 id="nightcrows.daily",
                 label="데일리",
                 runner=self.데일리,
                 board="nightcrows",
                 pre_focus="NIGHT CROWS",
-                post_minimize="NIGHT CROWS",
             ),
             ActionSpec(
                 id="nightcrows.panel",
