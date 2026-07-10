@@ -518,6 +518,7 @@ class ControlCenterApp:
         ttk.Button(right, text="긴급 정지", style="Danger.TButton", command=self._activate_emergency_stop).pack(side="left")
         ttk.Button(right, text="정지 해제", style="Board.TButton", command=self._release_emergency_stop).pack(side="left", padx=(8, 0))
         ttk.Button(right, text="창 초기화", style="Warning.TButton", command=self._reset_windows).pack(side="left", padx=(8, 0))
+        ttk.Button(right, text="GitHub 푸시", style="Board.TButton", command=self._git_push).pack(side="left", padx=(8, 0))
 
         # ── board canvas ─────────────────────────────────────────────────────
         content_shell = tk.Frame(shell, bg="#0b1220")
@@ -877,6 +878,37 @@ class ControlCenterApp:
     def _restart_app(self):
         self.root.destroy()
         subprocess.Popen([sys.executable] + sys.argv)
+
+    def _git_push(self):
+        def run():
+            try:
+                repo = os.path.dirname(os.path.dirname(__file__))
+                result = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=repo, capture_output=True, text=True
+                )
+                if not result.stdout.strip():
+                    self.root.after(0, lambda: messagebox.showinfo("GitHub 푸시", "변경된 파일이 없습니다.", parent=self.root))
+                    return
+
+                subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+                subprocess.run(
+                    ["git", "commit", "-m", "update: 동작 업데이트"],
+                    cwd=repo, check=True
+                )
+                push = subprocess.run(
+                    ["git", "push", "origin", "main"],
+                    cwd=repo, capture_output=True, text=True
+                )
+                if push.returncode == 0:
+                    self.root.after(0, lambda: messagebox.showinfo("GitHub 푸시", "푸시 완료됐습니다.", parent=self.root))
+                else:
+                    err = push.stderr.strip()
+                    self.root.after(0, lambda e=err: messagebox.showerror("GitHub 푸시 실패", e, parent=self.root))
+            except Exception as exc:
+                self.root.after(0, lambda e=str(exc): messagebox.showerror("GitHub 푸시 오류", e, parent=self.root))
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _reset_windows(self):
         failed = []

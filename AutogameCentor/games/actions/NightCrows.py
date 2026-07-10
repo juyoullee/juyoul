@@ -87,6 +87,21 @@ _우편받기_STEPS = [
     ("c",    26,  968, 0.05),
 ]
 
+
+_마사르타복귀스케줄러_STEPS = [
+    ("s", 1.93),
+    ("c",   931,   59, 0.05),
+    ("c",   887,  330, 0.05),
+    ("c",   660,  499, 0.05),
+    ("c",   874,  492, 0.05),
+    ("c",   931,  571, 0.05),
+    ("c",   890,  844, 0.05),
+    ("c",   652, 1012, 0.05),
+    ("c",   884, 1007, 0.05),
+    ("c",    23,  450, 0.05),
+    ("c",    26,  966, 0.05),
+]
+
 class NightCrows(ActionsBase):
     def __init__(self):
         super().__init__()
@@ -122,8 +137,18 @@ class NightCrows(ActionsBase):
     def 우편받기(self):
         return self._run_steps(_우편받기_STEPS)
 
+    def 마사르타복귀스케줄러(self):
+        return self._run_steps(_마사르타복귀스케줄러_STEPS)
+
     def get_action_specs(self):
         return [
+            ActionSpec(
+                id="nightcrows.마사르타복귀스케줄러",
+                label="마사르타복귀스케줄러",
+                runner=self.마사르타복귀스케줄러,
+                board="nightcrows",
+                pre_focus="NightCrows",
+            ),
             ActionSpec(
                 id="nightcrows.우편받기",
                 label="우편받기",
